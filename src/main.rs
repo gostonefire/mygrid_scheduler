@@ -1,4 +1,4 @@
-use std::fs;
+use std::{env, fs};
 use crate::models::BackupData;
 use crate::scheduling::Schedule;
 
@@ -6,7 +6,16 @@ mod scheduling;
 mod models;
 
 fn main() {
-    let data = load_data("C:/Slask/mygrid_scheduling/20251011220032_base_data.json");
+    let args: Vec<String> = env::args().collect();
+    let config_path = args.iter()
+        .find(|p| p.starts_with("--config="))
+        .expect("config file argument should be present");
+    let config_path = config_path
+        .split_once('=')
+        .expect("config file argument should be correct")
+        .1;
+
+    let data = load_data(config_path);
     let mut s = Schedule::new();
     s.update_scheduling(&data.tariffs, &data.production, &data.consumption, 4.48, data.date_time);
     
