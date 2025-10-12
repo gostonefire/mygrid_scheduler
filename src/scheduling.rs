@@ -31,8 +31,8 @@ pub enum Status {
 #[derive(Clone, Debug)]
 pub struct Block {
     pub block_type: BlockType,
-    pub start_time: DateTime<Local>,
-    pub end_time: DateTime<Local>,
+    pub start_time: Option<DateTime<Local>>,
+    pub end_time: Option<DateTime<Local>>,
     pub start_hour: usize,
     pub end_hour: usize,
     size: usize,
@@ -305,8 +305,8 @@ impl Schedule {
     fn get_charge_block(&self, start: usize, size: usize, charge_in: f64, charge_out: f64, cost: f64) -> Block {
         Block {
             block_type: BlockType::Charge,
-            start_time: Default::default(),
-            end_time: Default::default(),
+            start_time: None,
+            end_time: None,
             start_hour: start,
             end_hour: 0,
             size,
@@ -391,8 +391,8 @@ impl Schedule {
     fn get_none_charge_block(&self, pm: &PeriodMetrics) -> Block {
         Block {
             block_type: pm.block_type.clone(),
-            start_time: Default::default(),
-            end_time: Default::default(),
+            start_time: None,
+            end_time: None,
             start_hour: pm.start,
             end_hour: 0,
             size: pm.end - pm.start,
@@ -569,21 +569,21 @@ fn update_soc_and_end_values(mut blocks: Vec<Block>, soc_kwh: f64) -> Vec<Block>
 fn adjust_for_offset(mut blocks: Vec<Block>, date_time: DateTime<Local>, offset: usize) -> Vec<Block> {
     let time = date_time.duration_trunc(TimeDelta::days(1)).unwrap();
     for b in blocks.iter_mut(){
-        b.start_time = time;
-        b.end_time = time;
+        let mut start_time = time;
+        let mut end_time = time;
 
         b.start_hour += offset;
         if b.start_hour > 23 {
             b.start_hour -= 24;
-            b.start_time = b.start_time.add(TimeDelta::days(1));
+            start_time = start_time.add(TimeDelta::days(1));
         }
         b.end_hour += offset;
         if b.end_hour > 23 {
             b.end_hour -= 24;
-            b.end_time = b.end_time.add(TimeDelta::days(1));
+            end_time = end_time.add(TimeDelta::days(1));
         }
-        b.start_time = b.start_time.with_hour(b.start_hour as u32).unwrap();
-        b.end_time = b.end_time.with_hour(b.end_hour as u32).unwrap();
+        b.start_time = Some(start_time.with_hour(b.start_hour as u32).unwrap());
+        b.end_time = Some(end_time.with_hour(b.end_hour as u32).unwrap());
     }
 
     blocks
