@@ -173,7 +173,8 @@ impl Schedule {
     ///
     /// * 'charge_in' - any residual charge to bear in to the new schedule
     fn seek_best(&self, charge_in: f64) -> Blocks {
-        let mut record: HashMap<usize, Blocks> = self.create_base_blocks(charge_in);
+        // let mut record: HashMap<usize, Blocks> = self.create_base_blocks(charge_in);
+        let mut best_record: Blocks = self.create_base_blocks(charge_in);
 
         for seek_first_charge in 0..self.tariffs.length {
             for charge_level_first in (0..=90).step_by(5) {
@@ -186,7 +187,7 @@ impl Schedule {
                     for use_end_first in seek_first_use..=self.tariffs.length {
                         if let Some(first_use_blocks) = self.seek_use(first_charge_blocks.next_start, seek_first_use, use_end_first, first_charge_blocks.next_charge_in) {
                             let first_combined = combine_blocks(&first_charge_blocks, &first_use_blocks);
-                            self.record_best(1, &first_combined, &mut record);
+                            best_record = self.record_best(&first_combined, best_record);
 
                             for seek_second_charge in first_combined.next_start..self.tariffs.length {
                                 for charge_level_second in (0..=90).step_by(5) {
@@ -197,7 +198,7 @@ impl Schedule {
                                         if let Some(second_use_blocks) = self.seek_use(second_charge_blocks.next_start, seek_second_use, self.tariffs.length, second_charge_blocks.next_charge_in) {
                                             let second_combined = combine_blocks(&second_charge_blocks, &second_use_blocks);
                                             let all_combined = combine_blocks(&first_combined, &second_combined);
-                                            self.record_best(2, &all_combined, &mut record);
+                                            best_record = self.record_best(&all_combined, best_record);
                                         }
                                     }
                                 }
@@ -208,7 +209,7 @@ impl Schedule {
             }
         }
 
-        get_best(&record)
+        best_record
     }
 
     /// Creates an initial base block as a backstop if the search doesn't find any charge/use
@@ -217,7 +218,8 @@ impl Schedule {
     /// # Arguments
     ///
     /// * 'charge_in' - residual charge from the previous block
-    fn create_base_blocks(&self, charge_in: f64) -> HashMap<usize, Blocks> {
+    fn create_base_blocks(&self, charge_in: f64) -> Blocks {
+        /*
         let mut record: HashMap<usize, Blocks> = HashMap::new();
 
         let pm = self.update_for_pv(BlockType::Use, 0, self.tariffs.length, charge_in);
@@ -233,6 +235,18 @@ impl Schedule {
         });
 
         record
+         */
+        let pm = self.update_for_pv(BlockType::Use, 0, self.tariffs.length, charge_in);
+        let block = self.get_none_charge_block(&pm);
+
+        println!("{:?}", block);
+
+        Blocks {
+            next_start: self.tariffs.length,
+            next_charge_in: block.charge_out,
+            total_cost: block.cost,
+            blocks: vec![block],
+        }
     }
 
     /// Gets charge (and leading hold) block
@@ -491,17 +505,16 @@ impl Schedule {
     ///
     /// * 'level' - level is 1 or 2 and indicates whether it is a first search result or a combined 2-step search
     /// * 'blocks' - the Blocks struct to check and potentially save as the best for its level
-    /// * 'record' - the record of the best Blocks structs saved so far
-    fn record_best(&self, level: usize, blocks: &Blocks, record: &mut HashMap<usize, Blocks>) {
+    /// * 'best_blocks' - the record of the best Blocks structs saved so far
+    fn record_best(&self, blocks: &Blocks, best_blocks: Blocks) -> Blocks {
         let contender = self.trim_and_tail(&blocks);
 
-        if let Some(recorded_blocks) = record.get(&level) {
-            if contender.total_cost < recorded_blocks.total_cost {
-                record.insert(level, contender);
-            }
+        if contender.total_cost < best_blocks.total_cost || (contender.total_cost == best_blocks.total_cost && contender.blocks.len() < best_blocks.blocks.len()) {
+            contender
         } else {
-            record.insert(level, contender);
+            best_blocks
         }
+
     }
 
     /// Trims out any blocks with zero size (they are just artifacts from the search flow).
@@ -593,28 +606,4 @@ fn combine_blocks(blocks_one: &Blocks, blocks_two: &Blocks) -> Blocks {
     combined.blocks.extend(blocks_two.blocks.clone());
 
     combined
-}
-
-/// Returns the best block from what has been recorded for various levels
-///
-/// # Arguments
-///
-/// * 'record' - the record of the best Blocks structs saved so far
-fn get_best(record: &HashMap<usize, Blocks>) -> Blocks {
-    let mut best_total: Option<f64> = None;
-    let mut best_level: usize = 0;
-
-    // Sometimes level 0, 1 and/or 2 have the same cost. To ensure the shortest schedule is chosen,
-    // we need to ensure to start with the lowest level and going up.
-    let mut keys: Vec<usize> = record.keys().cloned().collect();
-    keys.sort();
-
-    for l in keys {
-        if best_total.is_none_or(|c| record[&l].total_cost < c) {
-            best_total = Some(record[&l].total_cost);
-            best_level = l;
-        }
-    }
-
-    record[&best_level].clone()
 }
