@@ -44,16 +44,15 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug)]
-pub struct BlockInternal {
-    pub block_type: BlockType,
-    pub start_hour: usize,
+struct BlockInternal {
+    block_type: BlockType,
+    start_hour: usize,
     size: usize,
-    pub cost: f64,
-    pub charge_in: f64,
-    pub charge_out: f64,
+    cost: f64,
+    charge_in: f64,
+    charge_out: f64,
 }
 
-#[derive(Clone, Debug)]
 #[derive(Default)]
 struct Blocks {
     blocks: Vec<BlockInternal>,
@@ -100,13 +99,13 @@ impl Schedule {
             date_time: Default::default(),
             blocks: Vec::new(),
             tariffs: Tariffs {
-                buy: [0.0;24],
+                buy: [0.0; 24],
                 length: 0,
                 offset: 0,
             },
             total_cost: 0.0,
-            net_prod: [0.0;24],
-            cons: [0.0;24],
+            net_prod: [0.0; 24],
+            cons: [0.0; 24],
             bat_capacity: 16.59,
             bat_kwh: 14.931,
             soc_kwh: 0.1659,
@@ -131,20 +130,20 @@ impl Schedule {
     /// * 'date_time' - the date time to stamp on the schedule
     pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValues>, production: &Vec<ProductionValues>, consumption: &Vec<ConsumptionValues>, charge_in: f64, date_time: DateTime<Local>) {
         let date_hour = date_time.duration_trunc(TimeDelta::hours(1)).unwrap();
-        let tariffs_in_scope: Vec<(f64,f64)> = tariffs.iter()
-            .filter(|t|t.valid_time >= date_hour && t.valid_time < date_hour.add(TimeDelta::days(1)))
-            .map(|t|(t.buy, t.sell))
-            .collect::<Vec<(f64,f64)>>();
+        let tariffs_in_scope: Vec<(f64, f64)> = tariffs.iter()
+            .filter(|t| t.valid_time >= date_hour && t.valid_time < date_hour.add(TimeDelta::days(1)))
+            .map(|t| (t.buy, t.sell))
+            .collect::<Vec<(f64, f64)>>();
         let allowed_length = tariffs_in_scope.len() as i64;
 
-        let mut prod: [f64;24] = [0.0; 24];
+        let mut prod: [f64; 24] = [0.0; 24];
         production.iter()
-            .filter(|p|p.valid_time >= date_hour && p.valid_time < date_hour.add(TimeDelta::hours(allowed_length)))
+            .filter(|p| p.valid_time >= date_hour && p.valid_time < date_hour.add(TimeDelta::hours(allowed_length)))
             .enumerate()
             .for_each(|(i, p)| prod[i] = p.power / 1000.0);
 
         consumption.iter()
-            .filter(|c|c.valid_time >= date_hour && c.valid_time < date_hour.add(TimeDelta::hours(allowed_length)))
+            .filter(|c| c.valid_time >= date_hour && c.valid_time < date_hour.add(TimeDelta::hours(allowed_length)))
             .enumerate()
             .for_each(|(i, p)| self.cons[i] = p.power / 1000.0);
 
@@ -169,13 +168,12 @@ impl Schedule {
     ///
     /// * 'charge_in' - any residual charge to bear in to the new schedule
     fn seek_best(&self, charge_in: f64) -> Blocks {
-        let mut quad: [Blocks;4] = [Default::default(),Default::default(),Default::default(),Default::default()];
+        let mut quad: [Blocks; 4] = [Default::default(), Default::default(), Default::default(), Default::default()];
 
         let mut best_record: Blocks = self.create_base_blocks(charge_in);
 
         for seek_first_charge in 0..self.tariffs.length {
             for charge_level_first in (0..=90).step_by(5) {
-
                 println!("{} - {}", seek_first_charge, charge_level_first);
 
                 quad[0] = self.seek_charge(0, seek_first_charge, charge_level_first, charge_in);
@@ -184,21 +182,15 @@ impl Schedule {
                     for use_end_first in seek_first_use..=self.tariffs.length {
                         if let Some(first_use_blocks) = self.seek_use(quad[0].next_start, seek_first_use, use_end_first, quad[0].next_charge_in) {
                             quad[1] = first_use_blocks;
-                            //let first_combined = combine_blocks(&first_charge_blocks, &first_use_blocks);
-                            //best_record = self.record_best(&first_combined, best_record);
                             best_record = self.new_record_best(&quad[0..2], best_record);
 
                             for seek_second_charge in quad[1].next_start..self.tariffs.length {
                                 for charge_level_second in (0..=90).step_by(5) {
-
                                     quad[2] = self.seek_charge(quad[1].next_start, seek_second_charge, charge_level_second, quad[1].next_charge_in);
 
                                     for seek_second_use in quad[2].next_start..self.tariffs.length {
                                         if let Some(second_use_blocks) = self.seek_use(quad[2].next_start, seek_second_use, self.tariffs.length, quad[2].next_charge_in) {
                                             quad[3] = second_use_blocks;
-                                            //let second_combined = combine_blocks(&second_charge_blocks, &second_use_blocks);
-                                            //let all_combined = combine_blocks(&first_combined, &second_combined);
-                                            //best_record = self.record_best(&all_combined, best_record);
                                             best_record = self.new_record_best(&quad, best_record);
                                         }
                                     }
@@ -209,44 +201,6 @@ impl Schedule {
                 }
             }
         }
-
-        /*
-        let mut best_record: Blocks = self.create_base_blocks(charge_in);
-
-        for seek_first_charge in 0..self.tariffs.length {
-            for charge_level_first in (0..=90).step_by(5) {
-
-                println!("{} - {}", seek_first_charge, charge_level_first);
-
-                let first_charge_blocks = self.seek_charge(0, seek_first_charge, charge_level_first, charge_in);
-
-                for seek_first_use in first_charge_blocks.next_start..self.tariffs.length {
-                    for use_end_first in seek_first_use..=self.tariffs.length {
-                        if let Some(first_use_blocks) = self.seek_use(first_charge_blocks.next_start, seek_first_use, use_end_first, first_charge_blocks.next_charge_in) {
-                            let first_combined = combine_blocks(&first_charge_blocks, &first_use_blocks);
-                            best_record = self.record_best(&first_combined, best_record);
-
-                            for seek_second_charge in first_combined.next_start..self.tariffs.length {
-                                for charge_level_second in (0..=90).step_by(5) {
-
-                                    let second_charge_blocks = self.seek_charge(first_combined.next_start, seek_second_charge, charge_level_second, first_combined.next_charge_in);
-
-                                    for seek_second_use in second_charge_blocks.next_start..self.tariffs.length {
-                                        if let Some(second_use_blocks) = self.seek_use(second_charge_blocks.next_start, seek_second_use, self.tariffs.length, second_charge_blocks.next_charge_in) {
-                                            let second_combined = combine_blocks(&second_charge_blocks, &second_use_blocks);
-                                            let all_combined = combine_blocks(&first_combined, &second_combined);
-                                            best_record = self.record_best(&all_combined, best_record);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-         */
 
         best_record
     }
@@ -297,13 +251,12 @@ impl Schedule {
             let pm_charge = self.update_for_pv(BlockType::Charge, start, end, 0.0);
 
             next_start += end - start;
-            next_charge_in = soc_level as f64 * self.soc_kwh;
             total_cost += c_cost + pm_charge.cost;
 
             if pm_charge.size > 0 {
+                next_charge_in = soc_level as f64 * self.soc_kwh;
                 blocks.push(self.get_charge_block(start, pm_charge.size, pm_hold.charge_out, next_charge_in, c_cost + pm_charge.cost));
             }
-
         }
 
         Blocks {
@@ -390,7 +343,7 @@ impl Schedule {
             blocks.push(self.get_none_charge_block(&pm_use));
         }
 
-        Some(Blocks{
+        Some(Blocks {
             next_start: pm_use.start + pm_use.size,
             next_charge_in: pm_use.charge_out,
             total_cost: pm_hold.cost + pm_use.cost,
@@ -431,19 +384,19 @@ impl Schedule {
             size: end - start,
             charge_in,
             charge_out: charge_in,
-            hold_level: if block_type != BlockType::Use {charge_in} else {0.0},
+            hold_level: if block_type != BlockType::Use { charge_in } else { 0.0 },
             cost: 0.0,
         };
 
         if block_type == BlockType::Charge {
             pm.cost = self.cons[start..end].iter()
                 .enumerate()
-                .map(|(i, &c)| self.tariffs.buy[i+start] * c)
+                .map(|(i, &c)| self.tariffs.buy[i + start] * c)
                 .sum::<f64>();
         } else {
             self.net_prod[start..end].iter()
                 .enumerate()
-                .for_each(|(i, &np)| self.add_net_prod(i+start, np, &mut pm) );
+                .for_each(|(i, &np)| self.add_net_prod(i + start, np, &mut pm));
         }
 
         pm
@@ -460,7 +413,7 @@ impl Schedule {
     fn add_net_prod(&self, np_idx: usize, np_item: f64, pm: &mut PeriodMetrics) {
         // If net production is negative, we will potentially draw power from the battery and thus
         // need to consider the efficiency of transforming battery stored energy into household energy
-        let efficiency: f64 = if np_item < 0.0 {self.discharge_efficiency} else {1.0 / self.charge_efficiency};
+        let efficiency: f64 = if np_item < 0.0 { self.discharge_efficiency } else { 1.0 / self.charge_efficiency };
 
         // net add is the currently expected charge out from the period with the addition of the
         // current time instance net production. The net production may be negative if the household
@@ -488,7 +441,7 @@ impl Schedule {
     /// * 'tariffs' - hourly prices from NordPool (excl VAT)
     /// * 'offset' - the offset between first value in the arrays and actual start time
     fn transform_tariffs(&self, tariffs: &Vec<(f64, f64)>, offset: usize) -> Tariffs {
-        let mut buy: [f64;24] = [0.0;24];
+        let mut buy: [f64; 24] = [0.0; 24];
         tariffs.iter()
             .enumerate()
             .for_each(|(i, &t)| {
@@ -498,24 +451,12 @@ impl Schedule {
         Tariffs { buy, length: tariffs.len(), offset }
     }
 
-    /// Saves the given Blocks struct if the total cost is better than any stored for the level
+    /// Returns the best blocks compared between the latest results and the stored best
     ///
     /// # Arguments
     ///
-    /// * 'level' - level is 1 or 2 and indicates whether it is a first search result or a combined 2-step search
-    /// * 'blocks' - the Blocks struct to check and potentially save as the best for its level
-    /// * 'best_blocks' - the record of the best Blocks structs saved so far
-    fn record_best(&self, blocks: &Blocks, best_blocks: Blocks) -> Blocks {
-        let contender = self.trim_and_tail(&blocks);
-
-        if contender.total_cost < best_blocks.total_cost || (contender.total_cost == best_blocks.total_cost && contender.blocks.len() < best_blocks.blocks.len()) {
-            contender
-        } else {
-            best_blocks
-        }
-
-    }
-
+    /// * 'quad' - the 2 or 4 blocks as stored in the quad variable
+    /// * 'best_blocks' - the current best blocks recorded
     fn new_record_best(&self, quad: &[Blocks], best_blocks: Blocks) -> Blocks {
         let quad_last = quad.len() - 1;
         let mut total_cost = quad.iter().map(|b| b.total_cost).sum::<f64>();
@@ -533,7 +474,6 @@ impl Schedule {
 
         if total_cost < best_blocks.total_cost {
             self.collect_blocks(quad, self.tariffs.length, next_charge_in, total_cost, pm)
-
         } else if total_cost == best_blocks.total_cost {
             num_blocks += quad.iter().map(|b| b.blocks.len()).sum::<usize>();
             if num_blocks < best_blocks.blocks.len() {
@@ -546,6 +486,15 @@ impl Schedule {
         }
     }
 
+    /// Collects blocks from the given quad array into one Blocks structure
+    ///
+    /// # Arguments
+    ///
+    /// * 'quad' - the 2 or 4 blocks as stored in the quad variable
+    /// * 'next_start' - to record
+    /// * 'next_charge_in' - to record
+    /// * 'total_cost' - to record
+    /// * 'pm' - optional data for creation of an ending hold block
     fn collect_blocks(&self, quad: &[Blocks], next_start: usize, next_charge_in: f64, total_cost: f64, pm: Option<PeriodMetrics>) -> Blocks {
         let mut new_best_blocks = Blocks {
             next_start,
@@ -558,29 +507,6 @@ impl Schedule {
         }
 
         new_best_blocks
-    }
-
-    /// Trims out any blocks with zero size (they are just artifacts from the search flow).
-    /// Also, it makes sure that we fill any empty tail with a suitable hold block
-    ///
-    /// # Arguments
-    ///
-    /// * 'blocks' - the Blocks struct to trim and add tail to
-    fn trim_and_tail(&self, blocks: &Blocks) -> Blocks {
-        let mut result = blocks.clone();
-
-        if result.next_start < self.tariffs.length {
-            let pm_hold = self.update_for_pv(BlockType::Hold, result.next_start, self.tariffs.length, result.next_charge_in);
-
-            result.next_start = self.tariffs.length;
-            result.next_charge_in = pm_hold.charge_out;
-            result.total_cost += pm_hold.cost;
-
-            result.blocks.push({
-                self.get_none_charge_block(&pm_hold)
-            });
-        }
-        result
     }
 }
 
@@ -628,22 +554,4 @@ fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: Dat
     }
 
     result
-}
-
-/// Combines two Blocks struct into one to get a complete day schedule
-///
-/// # Arguments
-///
-/// * 'blocks_one' - a blocks struct from a level one search
-/// * 'blocks_two' - a blocks struct from a subsequent level two search
-fn combine_blocks(blocks_one: &Blocks, blocks_two: &Blocks) -> Blocks {
-    let mut combined = Blocks {
-        blocks: blocks_one.blocks.clone(),
-        next_start: blocks_two.next_start,
-        next_charge_in: blocks_two.next_charge_in,
-        total_cost: blocks_one.total_cost + blocks_two.total_cost,
-    };
-    combined.blocks.extend(blocks_two.blocks.clone());
-
-    combined
 }
