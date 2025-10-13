@@ -3,10 +3,10 @@ use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike};
 use crate::models::{ConsumptionValues, ProductionValues, TariffValues};
 
 #[derive(Clone, Debug)]
-struct Tariffs {
-    buy: [f64;24],
-    length: usize,
-    offset: usize,
+pub struct Tariffs {
+    pub buy: [f64;24],
+    pub length: usize,
+    pub offset: usize,
 }
 
 /// Available block types
@@ -54,6 +54,7 @@ pub struct BlockInternal {
 }
 
 #[derive(Clone, Debug)]
+#[derive(Default)]
 struct Blocks {
     blocks: Vec<BlockInternal>,
     next_start: usize,
@@ -76,7 +77,7 @@ struct PeriodMetrics {
 pub struct Schedule {
     pub date_time: DateTime<Local>,
     pub blocks: Vec<Block>,
-    tariffs: Tariffs,
+    pub tariffs: Tariffs,
     pub total_cost: f64,
     net_prod: [f64;24],
     cons: [f64;24],
@@ -168,6 +169,48 @@ impl Schedule {
     ///
     /// * 'charge_in' - any residual charge to bear in to the new schedule
     fn seek_best(&self, charge_in: f64) -> Blocks {
+        let mut quad: [Blocks;4] = [Default::default(),Default::default(),Default::default(),Default::default()];
+
+        let mut best_record: Blocks = self.create_base_blocks(charge_in);
+
+        for seek_first_charge in 0..self.tariffs.length {
+            for charge_level_first in (0..=90).step_by(5) {
+
+                println!("{} - {}", seek_first_charge, charge_level_first);
+
+                quad[0] = self.seek_charge(0, seek_first_charge, charge_level_first, charge_in);
+
+                for seek_first_use in quad[0].next_start..self.tariffs.length {
+                    for use_end_first in seek_first_use..=self.tariffs.length {
+                        if let Some(first_use_blocks) = self.seek_use(quad[0].next_start, seek_first_use, use_end_first, quad[0].next_charge_in) {
+                            quad[1] = first_use_blocks;
+                            //let first_combined = combine_blocks(&first_charge_blocks, &first_use_blocks);
+                            //best_record = self.record_best(&first_combined, best_record);
+                            best_record = self.new_record_best(&quad[0..2], best_record);
+
+                            for seek_second_charge in quad[1].next_start..self.tariffs.length {
+                                for charge_level_second in (0..=90).step_by(5) {
+
+                                    quad[2] = self.seek_charge(quad[1].next_start, seek_second_charge, charge_level_second, quad[1].next_charge_in);
+
+                                    for seek_second_use in quad[2].next_start..self.tariffs.length {
+                                        if let Some(second_use_blocks) = self.seek_use(quad[2].next_start, seek_second_use, self.tariffs.length, quad[2].next_charge_in) {
+                                            quad[3] = second_use_blocks;
+                                            //let second_combined = combine_blocks(&second_charge_blocks, &second_use_blocks);
+                                            //let all_combined = combine_blocks(&first_combined, &second_combined);
+                                            //best_record = self.record_best(&all_combined, best_record);
+                                            best_record = self.new_record_best(&quad, best_record);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /*
         let mut best_record: Blocks = self.create_base_blocks(charge_in);
 
         for seek_first_charge in 0..self.tariffs.length {
@@ -202,6 +245,8 @@ impl Schedule {
                 }
             }
         }
+
+         */
 
         best_record
     }
@@ -469,6 +514,50 @@ impl Schedule {
             best_blocks
         }
 
+    }
+
+    fn new_record_best(&self, quad: &[Blocks], best_blocks: Blocks) -> Blocks {
+        let quad_last = quad.len() - 1;
+        let mut total_cost = quad.iter().map(|b| b.total_cost).sum::<f64>();
+        let mut next_charge_in = quad[quad_last].next_charge_in;
+        let mut pm: Option<PeriodMetrics> = None;
+        let mut num_blocks: usize = 0;
+
+        if quad[quad_last].next_start < self.tariffs.length {
+            let pm_hold = self.update_for_pv(BlockType::Hold, quad[quad_last].next_start, self.tariffs.length, quad[quad_last].next_charge_in);
+            total_cost += pm_hold.cost;
+            next_charge_in = pm_hold.charge_out;
+            pm = Some(pm_hold);
+            num_blocks = 1;
+        }
+
+        if total_cost < best_blocks.total_cost {
+            self.collect_blocks(quad, self.tariffs.length, next_charge_in, total_cost, pm)
+
+        } else if total_cost == best_blocks.total_cost {
+            num_blocks += quad.iter().map(|b| b.blocks.len()).sum::<usize>();
+            if num_blocks < best_blocks.blocks.len() {
+                self.collect_blocks(quad, self.tariffs.length, next_charge_in, total_cost, pm)
+            } else {
+                best_blocks
+            }
+        } else {
+            best_blocks
+        }
+    }
+
+    fn collect_blocks(&self, quad: &[Blocks], next_start: usize, next_charge_in: f64, total_cost: f64, pm: Option<PeriodMetrics>) -> Blocks {
+        let mut new_best_blocks = Blocks {
+            next_start,
+            next_charge_in,
+            total_cost,
+            blocks: quad.iter().map(|b| b.blocks.clone()).flatten().collect(),
+        };
+        if let Some(pm) = pm {
+            new_best_blocks.blocks.push(self.get_none_charge_block(&pm));
+        }
+
+        new_best_blocks
     }
 
     /// Trims out any blocks with zero size (they are just artifacts from the search flow).

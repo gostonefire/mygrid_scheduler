@@ -21,6 +21,7 @@ fn main() {
     s.update_scheduling(&data.tariffs, &data.production, &data.consumption, 0.0, data.date_time);
 
     println!("Total cost: {}", s.total_cost);
+    println!("{:?}", s.tariffs);
     for b in s.blocks {
         println!("{:?}", b);
     }
