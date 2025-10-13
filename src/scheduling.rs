@@ -66,12 +66,11 @@ struct Blocks {
 struct PeriodMetrics {
     block_type: BlockType,
     start: usize,
-    end: usize,
+    size: usize,
     charge_in: f64,
     charge_out: f64,
     hold_level: f64,
     cost: f64,
-    discharged: Option<usize>,
 }
 
 /// Struct representing the block schedule from the current hour and forward
@@ -259,24 +258,36 @@ impl Schedule {
     /// * 'charge_in' - residual charge from previous block
     fn seek_charge(&self, initial_start: usize, start: usize, soc_level: usize, charge_in: f64) -> Blocks {
         let pm_hold = self.update_for_pv(BlockType::Hold, initial_start, start, charge_in);
-        let hold = self.get_none_charge_block(&pm_hold);
+
+        let mut blocks: Vec<BlockInternal> = Vec::with_capacity(2);
+        if pm_hold.size > 0 {
+            blocks.push(self.get_none_charge_block(&pm_hold));
+        }
+
+        let mut next_start = start;
+        let mut next_charge_in = pm_hold.charge_out;
+        let mut total_cost = pm_hold.cost;
 
         let need = (soc_level as f64 * self.soc_kwh - pm_hold.charge_out) / self.charge_efficiency;
-        let charge: BlockInternal = if need > 0.0 {
+        if need > 0.0 {
             let (c_cost, end) = self.charge_cost_charge_end(start, need, None);
             let pm_charge = self.update_for_pv(BlockType::Charge, start, end, 0.0);
 
-            self.get_charge_block(start, end - start, pm_hold.charge_out, soc_level as f64 * self.soc_kwh, c_cost + pm_charge.cost)
+            next_start += end - start;
+            next_charge_in = soc_level as f64 * self.soc_kwh;
+            total_cost += c_cost + pm_charge.cost;
 
-        } else {
-            self.get_charge_block(start, 0, pm_hold.charge_out, pm_hold.charge_out, 0.0)
-        };
+            if pm_charge.size > 0 {
+                blocks.push(self.get_charge_block(start, pm_charge.size, pm_hold.charge_out, next_charge_in, c_cost + pm_charge.cost));
+            }
+
+        }
 
         Blocks {
-            next_start: charge.start_hour + charge.size,
-            next_charge_in: charge.charge_out,
-            total_cost: hold.cost + charge.cost,
-            blocks: vec![hold, charge],
+            next_start,
+            next_charge_in,
+            total_cost,
+            blocks,
         }
     }
 
@@ -347,14 +358,20 @@ impl Schedule {
         let pm_hold = self.update_for_pv(BlockType::Hold, initial_start, seek_start, charge_in);
         let pm_use = self.update_for_pv(BlockType::Use, seek_start, seek_end, pm_hold.charge_out);
 
-        let hold_block = self.get_none_charge_block(&pm_hold);
-        let use_block = self.get_none_charge_block(&pm_use);
+        let mut blocks: Vec<BlockInternal> = Vec::with_capacity(2);
+
+        if pm_hold.size > 0 {
+            blocks.push(self.get_none_charge_block(&pm_hold));
+        }
+        if pm_use.size > 0 {
+            blocks.push(self.get_none_charge_block(&pm_use));
+        }
 
         Some(Blocks{
-            next_start: use_block.start_hour + use_block.size,
-            next_charge_in: use_block.charge_out,
-            total_cost: hold_block.cost + use_block.cost,
-            blocks: vec![hold_block, use_block],
+            next_start: pm_use.start + pm_use.size,
+            next_charge_in: pm_use.charge_out,
+            total_cost: pm_hold.cost + pm_use.cost,
+            blocks,
         })
 
         /*
@@ -402,7 +419,7 @@ impl Schedule {
         BlockInternal {
             block_type: pm.block_type.clone(),
             start_hour: pm.start,
-            size: pm.end - pm.start,
+            size: pm.size,
             cost: pm.cost,
             charge_in: pm.charge_in,
             charge_out: pm.charge_out,
@@ -423,12 +440,11 @@ impl Schedule {
         let mut pm = PeriodMetrics {
             block_type: block_type.clone(),
             start,
-            end,
+            size: end - start,
             charge_in,
             charge_out: charge_in,
             hold_level: if block_type != BlockType::Use {charge_in} else {0.0},
             cost: 0.0,
-            discharged: if charge_in <= 0.0 {Some(start)} else {None},
         };
 
         if block_type == BlockType::Charge {
@@ -474,11 +490,6 @@ impl Schedule {
             // Charge out is set to eather max battery charge level or the net addition depending
             // on whether the battery is full or not.
             pm.charge_out = net_add.min(self.bat_kwh);
-        }
-
-        // The discharge indicator is set if the battery at any point is empty.
-        if pm.discharged.is_none() && pm.charge_out <= 0.0 {
-            pm.discharged = Some(np_idx);
         }
     }
 
@@ -527,7 +538,7 @@ impl Schedule {
         let mut result = blocks.clone();
 
         // Trim blocks with no length
-        result.blocks = result.blocks.iter().filter(|b| b.size > 0).cloned().collect::<Vec<BlockInternal>>();
+        //result.blocks = result.blocks.iter().filter(|b| b.size > 0).cloned().collect::<Vec<BlockInternal>>();
 
         if result.next_start < self.tariffs.length {
             let pm_hold = self.update_for_pv(BlockType::Hold, result.next_start, self.tariffs.length, result.next_charge_in);
