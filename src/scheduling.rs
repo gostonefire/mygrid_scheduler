@@ -31,12 +31,11 @@ pub enum Status {
 #[derive(Clone, Debug)]
 pub struct Block {
     pub block_type: BlockType,
-    pub start_time: Option<DateTime<Local>>,
-    pub end_time: Option<DateTime<Local>>,
+    pub start_time: DateTime<Local>,
+    pub end_time: DateTime<Local>,
     pub start_hour: usize,
     pub end_hour: usize,
     size: usize,
-    tariffs: Option<Tariffs>,
     pub cost: f64,
     pub charge_in: f64,
     pub charge_out: f64,
@@ -46,11 +45,20 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug)]
+pub struct BlockInternal {
+    pub block_type: BlockType,
+    pub start_hour: usize,
+    size: usize,
+    pub cost: f64,
+    pub charge_in: f64,
+    pub charge_out: f64,
+}
+
+#[derive(Clone, Debug)]
 struct Blocks {
-    blocks: Vec<Block>,
+    blocks: Vec<BlockInternal>,
     next_start: usize,
     next_charge_in: f64,
-    next_soc_in: usize,
     total_cost: f64,
 }
 
@@ -148,8 +156,10 @@ impl Schedule {
         self.date_time = date_time;
         self.tariffs = self.transform_tariffs(&tariffs_in_scope, date_hour.hour() as usize);
         let blocks = self.seek_best(charge_in);
-        let block_vec = update_soc_and_end_values(blocks.blocks, self.soc_kwh);
-        self.blocks = adjust_for_offset(block_vec, date_time, date_hour.hour() as usize);
+        self.blocks = create_out_blocks(blocks.blocks, self.soc_kwh, date_time, date_hour.hour() as usize);
+
+        //let block_vec = update_soc_and_end_values(blocks.blocks, self.soc_kwh);
+        //self.blocks = adjust_for_offset(block_vec, date_time, date_hour.hour() as usize);
         self.total_cost = blocks.total_cost;
     }
 
@@ -163,12 +173,10 @@ impl Schedule {
     ///
     /// * 'charge_in' - any residual charge to bear in to the new schedule
     fn seek_best(&self, charge_in: f64) -> Blocks {
-        let mut schedule_id: (u32,u32) = (0,0);
-        let mut record: HashMap<usize, Blocks> = self.create_base_blocks(schedule_id, charge_in);
+        let mut record: HashMap<usize, Blocks> = self.create_base_blocks(charge_in);
 
         for seek_first_charge in 0..self.tariffs.length {
             for charge_level_first in (0..=90).step_by(5) {
-                schedule_id = (schedule_id.0 + 1, 0);
 
                 println!("{} - {}", seek_first_charge, charge_level_first);
 
@@ -177,19 +185,18 @@ impl Schedule {
                 for seek_first_use in first_charge_blocks.next_start..self.tariffs.length {
                     for use_end_first in seek_first_use..=self.tariffs.length {
                         if let Some(first_use_blocks) = self.seek_use(first_charge_blocks.next_start, seek_first_use, use_end_first, first_charge_blocks.next_charge_in) {
-                            let first_combined = combine_blocks(schedule_id, &first_charge_blocks, &first_use_blocks);
+                            let first_combined = combine_blocks(&first_charge_blocks, &first_use_blocks);
                             self.record_best(1, &first_combined, &mut record);
 
                             for seek_second_charge in first_combined.next_start..self.tariffs.length {
                                 for charge_level_second in (0..=90).step_by(5) {
-                                    schedule_id = (schedule_id.0, schedule_id.1 + 1);
 
                                     let second_charge_blocks = self.seek_charge(first_combined.next_start, seek_second_charge, charge_level_second, first_combined.next_charge_in);
 
                                     for seek_second_use in second_charge_blocks.next_start..self.tariffs.length {
                                         if let Some(second_use_blocks) = self.seek_use(second_charge_blocks.next_start, seek_second_use, self.tariffs.length, second_charge_blocks.next_charge_in) {
-                                            let second_combined = combine_blocks(schedule_id, &second_charge_blocks, &second_use_blocks);
-                                            let all_combined = combine_blocks(schedule_id, &first_combined, &second_combined);
+                                            let second_combined = combine_blocks(&second_charge_blocks, &second_use_blocks);
+                                            let all_combined = combine_blocks(&first_combined, &second_combined);
                                             self.record_best(2, &all_combined, &mut record);
                                         }
                                     }
@@ -209,9 +216,8 @@ impl Schedule {
     ///
     /// # Arguments
     ///
-    /// * 'schedule_id' - an id that can be later used if some debugging is needed
     /// * 'charge_in' - residual charge from the previous block
-    fn create_base_blocks(&self, schedule_id: (u32,u32), charge_in: f64) -> HashMap<usize, Blocks> {
+    fn create_base_blocks(&self, charge_in: f64) -> HashMap<usize, Blocks> {
         let mut record: HashMap<usize, Blocks> = HashMap::new();
 
         let pm = self.update_for_pv(BlockType::Use, 0, self.tariffs.length, charge_in);
@@ -222,7 +228,6 @@ impl Schedule {
         record.insert(0,Blocks {
             next_start: self.tariffs.length,
             next_charge_in: block.charge_out,
-            next_soc_in: block.soc_out,
             total_cost: block.cost,
             blocks: vec![block],
         });
@@ -243,7 +248,7 @@ impl Schedule {
         let hold = self.get_none_charge_block(&pm_hold);
 
         let need = (soc_level as f64 * self.soc_kwh - pm_hold.charge_out) / self.charge_efficiency;
-        let charge: Block = if need > 0.0 {
+        let charge: BlockInternal = if need > 0.0 {
             let (c_cost, end) = self.charge_cost_charge_end(start, need, None);
             let pm_charge = self.update_for_pv(BlockType::Charge, start, end, 0.0);
 
@@ -256,7 +261,6 @@ impl Schedule {
         Blocks {
             next_start: charge.start_hour + charge.size,
             next_charge_in: charge.charge_out,
-            next_soc_in: charge.soc_out,
             total_cost: hold.cost + charge.cost,
             blocks: vec![hold, charge],
         }
@@ -302,21 +306,14 @@ impl Schedule {
     /// * 'charge_in' - residual charge from previous block
     /// * 'charge_out' - charge out after charging
     /// * 'cost' - the price, or cost, for charging
-    fn get_charge_block(&self, start: usize, size: usize, charge_in: f64, charge_out: f64, cost: f64) -> Block {
-        Block {
+    fn get_charge_block(&self, start: usize, size: usize, charge_in: f64, charge_out: f64, cost: f64) -> BlockInternal {
+        BlockInternal {
             block_type: BlockType::Charge,
-            start_time: None,
-            end_time: None,
             start_hour: start,
-            end_hour: 0,
             size,
-            tariffs: Some(self.tariffs.clone()),
             cost,
             charge_in,
             charge_out,
-            soc_in: 0,
-            soc_out: 0,
-            status: Status::Waiting,
         }
     }
 
@@ -342,7 +339,6 @@ impl Schedule {
         Some(Blocks{
             next_start: use_block.start_hour + use_block.size,
             next_charge_in: use_block.charge_out,
-            next_soc_in: use_block.soc_out,
             total_cost: hold_block.cost + use_block.cost,
             blocks: vec![hold_block, use_block],
         })
@@ -388,21 +384,14 @@ impl Schedule {
     /// # Arguments
     ///
     /// * 'pm' - a PeriodMetrics struct
-    fn get_none_charge_block(&self, pm: &PeriodMetrics) -> Block {
-        Block {
+    fn get_none_charge_block(&self, pm: &PeriodMetrics) -> BlockInternal {
+        BlockInternal {
             block_type: pm.block_type.clone(),
-            start_time: None,
-            end_time: None,
             start_hour: pm.start,
-            end_hour: 0,
             size: pm.end - pm.start,
-            tariffs: None,
             cost: pm.cost,
             charge_in: pm.charge_in,
             charge_out: pm.charge_out,
-            soc_in: 0,
-            soc_out: 0,
-            status: Status::Waiting,
         }
     }
 
@@ -525,14 +514,13 @@ impl Schedule {
         let mut result = blocks.clone();
 
         // Trim blocks with no length
-        result.blocks = result.blocks.iter().filter(|b| b.size > 0).cloned().collect::<Vec<Block>>();
+        result.blocks = result.blocks.iter().filter(|b| b.size > 0).cloned().collect::<Vec<BlockInternal>>();
 
         if result.next_start < self.tariffs.length {
             let pm_hold = self.update_for_pv(BlockType::Hold, result.next_start, self.tariffs.length, result.next_charge_in);
 
             result.next_start = self.tariffs.length;
             result.next_charge_in = pm_hold.charge_out;
-            result.next_soc_in = 10 + (pm_hold.charge_out / self.soc_kwh).round().min(90.0) as usize;
             result.total_cost += pm_hold.cost;
 
             result.blocks.push({
@@ -543,65 +531,63 @@ impl Schedule {
     }
 }
 
-/// Updates the soc_in and soc_out state-of-charge values for a list of Block objects.
+/// Creates output blocks by completing missing information and adding the offset
 ///
 /// # Arguments
 ///
-/// * 'blocks' - list of Block objects
-/// * 'soc_kwh' - kWh per soc
-fn update_soc_and_end_values(mut blocks: Vec<Block>, soc_kwh: f64) -> Vec<Block> {
-    for b in blocks.iter_mut(){
-        b.soc_in = 10 + (b.charge_in / soc_kwh).round().min(90.0) as usize;
-        b.soc_out = 10 + (b.charge_out / soc_kwh).round().min(90.0) as usize;
-        b.end_hour = b.start_hour + b.size - 1;
-    }
-
-    blocks
-}
-
-/// Adjusts start and end hours according to the given offset
-///
-/// # Arguments
-///
-/// * 'blocks' - a vector of Block
-/// * 'date_time' - the date and time to use for the offset calculation
+/// * 'blocks' - a vector of temporary internal blocks
+/// * 'soc_kwh' - kWh per soc used to convert from charge to State of Charge
+/// * 'date_time' - the date and time to be used to convert from hours to datetime in local TZ
 /// * 'offset' - the offset to apply
-fn adjust_for_offset(mut blocks: Vec<Block>, date_time: DateTime<Local>, offset: usize) -> Vec<Block> {
+fn create_out_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: DateTime<Local>, offset: usize) -> Vec<Block> {
+    let mut result: Vec<Block> = Vec::new();
     let time = date_time.duration_trunc(TimeDelta::days(1)).unwrap();
-    for b in blocks.iter_mut(){
+
+    for b in blocks {
         let mut start_time = time;
         let mut end_time = time;
 
-        b.start_hour += offset;
-        if b.start_hour > 23 {
-            b.start_hour -= 24;
+        let mut start_hour = b.start_hour + offset;
+        if start_hour > 23 {
+            start_hour -= 24;
             start_time = start_time.add(TimeDelta::days(1));
         }
-        b.end_hour += offset;
-        if b.end_hour > 23 {
-            b.end_hour -= 24;
+        let mut end_hour = b.start_hour + b.size - 1 + offset;
+        if end_hour > 23 {
+            end_hour -= 24;
             end_time = end_time.add(TimeDelta::days(1));
         }
-        b.start_time = Some(start_time.with_hour(b.start_hour as u32).unwrap());
-        b.end_time = Some(end_time.with_hour(b.end_hour as u32).unwrap());
+
+        result.push(Block {
+            block_type: b.block_type.clone(),
+            start_time: start_time.with_hour(start_hour as u32).unwrap(),
+            end_time: end_time.with_hour(end_hour as u32).unwrap(),
+            start_hour,
+            end_hour,
+            size: b.size,
+            cost: b.cost,
+            charge_in: b.charge_in,
+            charge_out: b.charge_out,
+            soc_in: 10 + (b.charge_in / soc_kwh).round().min(90.0) as usize,
+            soc_out: 10 + (b.charge_out / soc_kwh).round().min(90.0) as usize,
+            status: Status::Waiting,
+        });
     }
 
-    blocks
+    result
 }
 
 /// Combines two Blocks struct into one to get a complete day schedule
 ///
 /// # Arguments
 ///
-/// * 'schedule_id' - the schedule id for the combined schedule
 /// * 'blocks_one' - a blocks struct from a level one search
 /// * 'blocks_two' - a blocks struct from a subsequent level two search
-fn combine_blocks(schedule_id: (u32,u32), blocks_one: &Blocks, blocks_two: &Blocks) -> Blocks {
+fn combine_blocks(blocks_one: &Blocks, blocks_two: &Blocks) -> Blocks {
     let mut combined = Blocks {
         blocks: blocks_one.blocks.clone(),
         next_start: blocks_two.next_start,
         next_charge_in: blocks_two.next_charge_in,
-        next_soc_in: blocks_two.next_soc_in,
         total_cost: blocks_one.total_cost + blocks_two.total_cost,
     };
     combined.blocks.extend(blocks_two.blocks.clone());
