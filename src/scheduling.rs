@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::ops::Add;
 use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike};
 use crate::models::{ConsumptionValues, ProductionValues, TariffValues};
@@ -155,10 +154,7 @@ impl Schedule {
         self.date_time = date_time;
         self.tariffs = self.transform_tariffs(&tariffs_in_scope, date_hour.hour() as usize);
         let blocks = self.seek_best(charge_in);
-        self.blocks = create_out_blocks(blocks.blocks, self.soc_kwh, date_time, date_hour.hour() as usize);
-
-        //let block_vec = update_soc_and_end_values(blocks.blocks, self.soc_kwh);
-        //self.blocks = adjust_for_offset(block_vec, date_time, date_hour.hour() as usize);
+        self.blocks = create_result_blocks(blocks.blocks, self.soc_kwh, date_time, date_hour.hour() as usize);
         self.total_cost = blocks.total_cost;
     }
 
@@ -172,7 +168,6 @@ impl Schedule {
     ///
     /// * 'charge_in' - any residual charge to bear in to the new schedule
     fn seek_best(&self, charge_in: f64) -> Blocks {
-        // let mut record: HashMap<usize, Blocks> = self.create_base_blocks(charge_in);
         let mut best_record: Blocks = self.create_base_blocks(charge_in);
 
         for seek_first_charge in 0..self.tariffs.length {
@@ -218,23 +213,6 @@ impl Schedule {
     ///
     /// * 'charge_in' - residual charge from the previous block
     fn create_base_blocks(&self, charge_in: f64) -> Blocks {
-        /*
-        let mut record: HashMap<usize, Blocks> = HashMap::new();
-
-        let pm = self.update_for_pv(BlockType::Use, 0, self.tariffs.length, charge_in);
-        let block = self.get_none_charge_block(&pm);
-
-        println!("{:?}", block);
-
-        record.insert(0,Blocks {
-            next_start: self.tariffs.length,
-            next_charge_in: block.charge_out,
-            total_cost: block.cost,
-            blocks: vec![block],
-        });
-
-        record
-         */
         let pm = self.update_for_pv(BlockType::Use, 0, self.tariffs.length, charge_in);
         let block = self.get_none_charge_block(&pm);
 
@@ -373,41 +351,6 @@ impl Schedule {
             total_cost: pm_hold.cost + pm_use.cost,
             blocks,
         })
-
-        /*
-        let mut min_cost: Option<f64> = None;
-        let mut best_pair: Option<(PeriodMetrics, PeriodMetrics)> = None;
-
-        for u_start in seek_start..self.tariffs.length {
-
-            let pm_hold = self.update_for_pv(BlockType::Hold, initial_start, u_start, charge_in, charge_tariff_in);
-            let pm_use = self.update_for_pv(BlockType::Use, u_start, self.tariffs.length, pm_hold.charge_out, pm_hold.charge_tariff_out);
-
-            let total_cost = pm_hold.cost + pm_use.cost - pm_hold.overflow_earn - pm_use.overflow_earn;
-
-            if min_cost.is_none_or(|c| total_cost < c) {
-                min_cost = Some(total_cost);
-                best_pair = Some((pm_hold, pm_use));
-            }
-        }
-
-        if let Some((pm_hold, pm_use)) = best_pair {
-            let hold_block = self.get_none_charge_block(&pm_hold);
-            let use_block = self.get_none_charge_block(&pm_use);
-
-            Some(Blocks{
-                schedule_id: None,
-                next_start: use_block.start_hour + use_block.size,
-                next_charge_in: use_block.charge_out,
-                next_charge_tariff_in: use_block.charge_tariff_out,
-                next_soc_in: use_block.soc_out,
-                total_cost: hold_block.cost + use_block.cost - hold_block.overflow_earn - use_block.overflow_earn,
-                blocks: vec![hold_block, use_block],
-            })
-        } else {
-            None
-        }
-        */
     }
 
     /// Creates a hold or use block
@@ -537,9 +480,6 @@ impl Schedule {
     fn trim_and_tail(&self, blocks: &Blocks) -> Blocks {
         let mut result = blocks.clone();
 
-        // Trim blocks with no length
-        //result.blocks = result.blocks.iter().filter(|b| b.size > 0).cloned().collect::<Vec<BlockInternal>>();
-
         if result.next_start < self.tariffs.length {
             let pm_hold = self.update_for_pv(BlockType::Hold, result.next_start, self.tariffs.length, result.next_charge_in);
 
@@ -563,7 +503,7 @@ impl Schedule {
 /// * 'soc_kwh' - kWh per soc used to convert from charge to State of Charge
 /// * 'date_time' - the date and time to be used to convert from hours to datetime in local TZ
 /// * 'offset' - the offset to apply
-fn create_out_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: DateTime<Local>, offset: usize) -> Vec<Block> {
+fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: DateTime<Local>, offset: usize) -> Vec<Block> {
     let mut result: Vec<Block> = Vec::new();
     let time = date_time.duration_trunc(TimeDelta::days(1)).unwrap();
 
