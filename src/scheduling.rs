@@ -54,7 +54,7 @@ struct BlockInternal {
 }
 
 #[derive(Default)]
-struct Blocks {
+struct BlockCollection {
     blocks: Vec<BlockInternal>,
     next_start: usize,
     next_charge_in: f64,
@@ -116,9 +116,7 @@ impl Schedule {
     }
 
     /// Updates scheduling based on tariffs, production and consumption estimates.
-    /// It can also base the schedule on any residual charge and its mean charge tariff carrying in
-    /// from a previous schedule or from the inverter itself (in which case it might be hard to determine
-    /// the mean charge tariff).
+    /// It can also base the schedule on any residual charge.
     ///
     /// # Arguments
     ///
@@ -126,7 +124,6 @@ impl Schedule {
     /// * 'production' - production estimates per hour
     /// * 'consumption' - consumption estimates per hour
     /// * 'charge_in' - any residual charge to bear in to the new schedule
-    /// * 'charge_tariff_in' - the mean price for the residual price
     /// * 'date_time' - the date time to stamp on the schedule
     pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValues>, production: &Vec<ProductionValues>, consumption: &Vec<ConsumptionValues>, charge_in: f64, date_time: DateTime<Local>) {
         let date_hour = date_time.duration_trunc(TimeDelta::hours(1)).unwrap();
@@ -153,24 +150,24 @@ impl Schedule {
 
         self.date_time = date_time;
         self.tariffs = self.transform_tariffs(&tariffs_in_scope, date_hour.hour() as usize);
-        let blocks = self.seek_best(charge_in);
-        self.blocks = create_result_blocks(blocks.blocks, self.soc_kwh, date_time, date_hour.hour() as usize);
-        self.total_cost = blocks.total_cost;
+        let block_collection = self.seek_best(charge_in);
+        self.blocks = create_result_blocks(block_collection.blocks, self.soc_kwh, date_time, date_hour.hour() as usize);
+        self.total_cost = block_collection.total_cost;
     }
 
     /// Seeks the best schedule given input parameters.
     /// The algorithm searches through all combinations of charge blocks, use blocks and charge levels
-    /// and returns the one with the best price (i.e. the mean price for usage minus the price for charging).
-    /// It also considers charge input from PV, which not only tops up batteries but also lowers the
-    /// mean price for the stored energy, which in turn can be used for even lower hourly tariffs.
+    /// and returns the one with the lowest cost.
+    ///
+    /// It also considers charge input from PV.
     ///
     /// # Arguments
     ///
     /// * 'charge_in' - any residual charge to bear in to the new schedule
-    fn seek_best(&self, charge_in: f64) -> Blocks {
-        let mut quad: [Blocks; 4] = [Default::default(), Default::default(), Default::default(), Default::default()];
+    fn seek_best(&self, charge_in: f64) -> BlockCollection {
+        let mut quad: [BlockCollection; 4] = [Default::default(), Default::default(), Default::default(), Default::default()];
 
-        let mut best_record: Blocks = self.create_base_blocks(charge_in);
+        let mut best_record: BlockCollection = self.create_base_block_collection(charge_in);
 
         for seek_first_charge in 0..self.tariffs.length {
             for charge_level_first in (0..=90).step_by(5) {
@@ -180,9 +177,9 @@ impl Schedule {
 
                 for seek_first_use in quad[0].next_start..self.tariffs.length {
                     for use_end_first in seek_first_use..=self.tariffs.length {
-                        if let Some(first_use_blocks) = self.seek_use(quad[0].next_start, seek_first_use, use_end_first, quad[0].next_charge_in) {
-                            quad[1] = first_use_blocks;
-                            best_record = self.new_record_best(&quad[0..2], best_record);
+                        if let Some(first_use_collection) = self.seek_use(quad[0].next_start, seek_first_use, use_end_first, quad[0].next_charge_in) {
+                            quad[1] = first_use_collection;
+                            best_record = self.record_best_collection(&quad[0..2], best_record);
 
                             for seek_second_charge in quad[1].next_start..self.tariffs.length {
                                 for charge_level_second in (0..=90).step_by(5) {
@@ -191,7 +188,7 @@ impl Schedule {
                                     for seek_second_use in quad[2].next_start..self.tariffs.length {
                                         if let Some(second_use_blocks) = self.seek_use(quad[2].next_start, seek_second_use, self.tariffs.length, quad[2].next_charge_in) {
                                             quad[3] = second_use_blocks;
-                                            best_record = self.new_record_best(&quad, best_record);
+                                            best_record = self.record_best_collection(&quad, best_record);
                                         }
                                     }
                                 }
@@ -205,19 +202,19 @@ impl Schedule {
         best_record
     }
 
-    /// Creates an initial base block as a backstop if the search doesn't find any charge/use
+    /// Creates an initial base block collection as a backstop if the search doesn't find any charge/use
     /// opportunities.
     ///
     /// # Arguments
     ///
     /// * 'charge_in' - residual charge from the previous block
-    fn create_base_blocks(&self, charge_in: f64) -> Blocks {
+    fn create_base_block_collection(&self, charge_in: f64) -> BlockCollection {
         let pm = self.update_for_pv(BlockType::Use, 0, self.tariffs.length, charge_in);
         let block = self.get_none_charge_block(&pm);
 
         println!("{:?}", block);
 
-        Blocks {
+        BlockCollection {
             next_start: self.tariffs.length,
             next_charge_in: block.charge_out,
             total_cost: block.cost,
@@ -233,7 +230,7 @@ impl Schedule {
     /// * 'start' - start hour for the proposed charge block
     /// * 'soc_level' - the state of charge (SoC) to target the charge block for, it is given from 0-90 (10% is always reserved in the battery)
     /// * 'charge_in' - residual charge from previous block
-    fn seek_charge(&self, initial_start: usize, start: usize, soc_level: usize, charge_in: f64) -> Blocks {
+    fn seek_charge(&self, initial_start: usize, start: usize, soc_level: usize, charge_in: f64) -> BlockCollection {
         let pm_hold = self.update_for_pv(BlockType::Hold, initial_start, start, charge_in);
 
         let mut blocks: Vec<BlockInternal> = Vec::with_capacity(2);
@@ -259,7 +256,7 @@ impl Schedule {
             }
         }
 
-        Blocks {
+        BlockCollection {
             next_start,
             next_charge_in,
             total_cost,
@@ -326,7 +323,7 @@ impl Schedule {
     /// * 'seek_start' - where this run is supposed to start its search
     /// * 'seek_end' - where this run is supposed to end its search (non-inclusive)
     /// * 'charge_in' - residual charge from previous block
-    fn seek_use(&self, initial_start: usize, seek_start: usize, seek_end: usize, charge_in: f64) -> Option<Blocks> {
+    fn seek_use(&self, initial_start: usize, seek_start: usize, seek_end: usize, charge_in: f64) -> Option<BlockCollection> {
         if seek_start == seek_end {
             return None;
         }
@@ -343,7 +340,7 @@ impl Schedule {
             blocks.push(self.get_none_charge_block(&pm_use));
         }
 
-        Some(Blocks {
+        Some(BlockCollection {
             next_start: pm_use.start + pm_use.size,
             next_charge_in: pm_use.charge_out,
             total_cost: pm_hold.cost + pm_use.cost,
@@ -368,8 +365,7 @@ impl Schedule {
     }
 
 
-    /// Updates stored charges and how addition from PV (free electricity) affects the mean price for the stored charge.
-    /// Also, it breaks out any overflow, i.e. charge that exceeds the battery maximum, and the sell price for that overflow
+    /// Updates stored charges and how addition from PV (free electricity) affects the stored charge.
     ///
     /// # Arguments
     ///
@@ -451,13 +447,13 @@ impl Schedule {
         Tariffs { buy, length: tariffs.len(), offset }
     }
 
-    /// Returns the best blocks compared between the latest results and the stored best
+    /// Returns the best block collection compared between the latest results and the stored best
     ///
     /// # Arguments
     ///
     /// * 'quad' - the 2 or 4 blocks as stored in the quad variable
     /// * 'best_blocks' - the current best blocks recorded
-    fn new_record_best(&self, quad: &[Blocks], best_blocks: Blocks) -> Blocks {
+    fn record_best_collection(&self, quad: &[BlockCollection], best_blocks: BlockCollection) -> BlockCollection {
         let quad_last = quad.len() - 1;
         let mut total_cost = quad.iter().map(|b| b.total_cost).sum::<f64>();
         let mut next_charge_in = quad[quad_last].next_charge_in;
@@ -486,7 +482,7 @@ impl Schedule {
         }
     }
 
-    /// Collects blocks from the given quad array into one Blocks structure
+    /// Collects blocks from the given quad array into one block collection structure
     ///
     /// # Arguments
     ///
@@ -495,8 +491,8 @@ impl Schedule {
     /// * 'next_charge_in' - to record
     /// * 'total_cost' - to record
     /// * 'pm' - optional data for creation of an ending hold block
-    fn collect_blocks(&self, quad: &[Blocks], next_start: usize, next_charge_in: f64, total_cost: f64, pm: Option<PeriodMetrics>) -> Blocks {
-        let mut new_best_blocks = Blocks {
+    fn collect_blocks(&self, quad: &[BlockCollection], next_start: usize, next_charge_in: f64, total_cost: f64, pm: Option<PeriodMetrics>) -> BlockCollection {
+        let mut new_best_blocks = BlockCollection {
             next_start,
             next_charge_in,
             total_cost,

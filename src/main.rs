@@ -18,7 +18,7 @@ fn main() {
     let data = load_data(config_path);
     let mut s = Schedule::new();
     //s.update_scheduling(&data.tariffs, &data.production, &data.consumption, 4.48, data.date_time);
-    s.update_scheduling(&data.tariffs, &data.production, &data.consumption, 0.0, data.date_time);
+    s.update_scheduling(&data.tariffs, &data.production, &data.consumption, 5.14, data.date_time);
 
     println!("Total cost: {}", s.total_cost);
     println!("{:?}", s.tariffs);
