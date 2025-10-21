@@ -7,7 +7,7 @@ use crate::models::{ConsumptionValues, ProductionValues, TariffValues};
 
 #[derive(Debug)]
 pub struct Tariffs {
-    pub buy: [f64;24],
+    pub buy: [f64;96],
     pub length: usize,
 }
 
@@ -58,7 +58,9 @@ pub struct Block {
     pub start_time: DateTime<Local>,
     pub end_time: DateTime<Local>,
     pub start_hour: usize,
+    pub start_minute: usize,
     pub end_hour: usize,
+    pub end_minute: usize,
     size: usize,
     pub cost: f64,
     pub charge_in: f64,
@@ -135,8 +137,8 @@ pub struct Schedule {
     pub blocks: Vec<Block>,
     pub tariffs: Tariffs,
     pub total_cost: f64,
-    net_prod: [f64;24],
-    cons: [f64;24],
+    net_prod: [f64;96],
+    cons: [f64;96],
     bat_kwh: f64,
     soc_kwh: f64,
     charge_kwh_instance: f64,
@@ -156,15 +158,15 @@ impl Schedule {
             date_time: Default::default(),
             blocks: schedule_blocks.unwrap_or(Vec::new()),
             tariffs: Tariffs {
-                buy: [0.0; 24],
+                buy: [0.0; 96],
                 length: 0,
             },
             total_cost: 0.0,
-            net_prod: [0.0; 24],
-            cons: [0.0; 24],
+            net_prod: [0.0; 96],
+            cons: [0.0; 96],
             bat_kwh: 14.931,
             soc_kwh: 0.1659,
-            charge_kwh_instance: 6.0,
+            charge_kwh_instance: 6.0 / 4.0,
             charge_efficiency: 0.9,
             discharge_efficiency: 0.9,
         }
@@ -241,7 +243,7 @@ impl Schedule {
             .collect::<Vec<(f64, f64)>>();
         let allowed_length = tariffs_in_scope.len() as i64;
 
-        let mut prod: [f64; 24] = [0.0; 24];
+        let mut prod: [f64; 96] = [0.0; 96];
         production.iter()
             .filter(|p| p.valid_time >= date_hour && p.valid_time < date_hour.add(TimeDelta::hours(allowed_length)))
             .enumerate()
@@ -281,6 +283,7 @@ impl Schedule {
 
         for seek_first_charge in 0..self.tariffs.length {
             for charge_level_first in (0..=90).step_by(5) {
+                println!("{:02} {:02}", seek_first_charge, charge_level_first);
 
                 quad[0] = self.seek_charge(0, seek_first_charge, charge_level_first, charge_in);
 
@@ -289,9 +292,9 @@ impl Schedule {
                         if let Some(first_use_collection) = self.seek_use(quad[0].next_start, seek_first_use, use_end_first, quad[0].next_charge_in) {
                             quad[1] = first_use_collection;
 
-                            if seek_first_charge == 4 && charge_level_first == 55 && seek_first_use == 8 && use_end_first == 24 {
-                                println!();
-                            }
+                            //if seek_first_charge == 17 && charge_level_first == 55 && seek_first_use == 32 && use_end_first == 96 {
+                            //    println!();
+                            //}
 
                             best_record = self.record_best_collection(&quad[0..2], best_record);
 
@@ -329,7 +332,7 @@ impl Schedule {
         BlockCollection {
             next_start: self.tariffs.length,
             next_charge_in: block.charge_out,
-            total_cost: block.cost,
+            total_cost: (block.cost * 100.0).round() / 100.0,
             blocks: vec![block],
         }
     }
@@ -404,7 +407,7 @@ impl Schedule {
             .map(|(i, t)| instance_charge[i] * t)
             .sum::<f64>();
 
-        ((c_price * 100.0).round() / 100.0, end)
+        (c_price, end)
     }
 
     /// Creates a charge block
@@ -507,7 +510,6 @@ impl Schedule {
                 .for_each(|(i, &np)| self.add_net_prod(i + start, np, &mut pm));
         }
 
-        pm.cost = (pm.cost * 100.0).round() / 100.0;
         pm
     }
 
@@ -549,7 +551,7 @@ impl Schedule {
     ///
     /// * 'tariffs' - hourly prices from NordPool (excl VAT)
     fn transform_tariffs(&self, tariffs: &Vec<(f64, f64)>) -> Tariffs {
-        let mut buy: [f64; 24] = [0.0; 24];
+        let mut buy: [f64; 96] = [0.0; 96];
         tariffs.iter()
             .enumerate()
             .for_each(|(i, &t)| {
@@ -579,6 +581,8 @@ impl Schedule {
             pm = Some(pm_hold);
             num_blocks = 1;
         }
+
+        total_cost = (total_cost * 100.0).round() / 100.0;
 
         if total_cost < best_blocks.total_cost {
             self.collect_blocks(quad, self.tariffs.length, next_charge_in, total_cost, pm)
@@ -634,20 +638,22 @@ fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: Dat
         let mut start_time = time;
         let mut end_time = time;
 
-        let mut start_hour = b.start_hour + offset;
+        let mut start_hour = b.start_hour / 4 + offset;
+        let start_minute = b.start_hour % 4 * 15;
         if start_hour > 23 {
             start_hour -= 24;
             start_time = start_time.add(TimeDelta::days(1));
         }
 
-        let mut end_hour = b.start_hour + b.size - 1 + offset;
+        let mut end_hour = (b.start_hour + b.size - 1) / 4 + offset;
+        let end_minute = (b.start_hour + b.size - 1) % 4 * 15;
         if end_hour > 23 {
             end_hour -= 24;
             end_time = end_time.add(TimeDelta::days(1));
         }
 
-        start_time = start_time.with_hour(start_hour as u32).unwrap();
-        end_time = end_time.with_hour(end_hour as u32).unwrap();
+        start_time = start_time.with_hour(start_hour as u32).unwrap().with_minute(start_minute as u32).unwrap();
+        end_time = end_time.with_hour(end_hour as u32).unwrap().with_minute(end_minute as u32).unwrap();
 
         result.push(Block {
             block_id: start_time.with_timezone(&Utc).timestamp() as usize,
@@ -655,7 +661,9 @@ fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: Dat
             start_time,
             end_time,
             start_hour,
+            start_minute,
             end_hour,
+            end_minute,
             size: b.size,
             cost: b.cost,
             charge_in: b.charge_in,
