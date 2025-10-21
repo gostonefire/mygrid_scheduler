@@ -1,8 +1,8 @@
 use std::{env, fs};
 use crate::models::BackupData;
-use crate::scheduling::Schedule;
+use crate::scheduler::Schedule;
 
-mod scheduling;
+mod scheduler;
 mod models;
 
 fn main() {
@@ -16,9 +16,9 @@ fn main() {
         .1;
 
     let data = load_data(config_path);
-    let mut s = Schedule::new();
+    let mut s = Schedule::new(None);
     //s.update_scheduling(&data.tariffs, &data.production, &data.consumption, 4.48, data.date_time);
-    s.update_scheduling(&data.tariffs, &data.production, &data.consumption, 5.14, data.date_time);
+    s.update_scheduling(&data.tariffs, &data.production, &data.consumption, 10, data.date_time);
 
     println!("Total cost: {}", s.total_cost);
     println!("{:?}", s.tariffs);

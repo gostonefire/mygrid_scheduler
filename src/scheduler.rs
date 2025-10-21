@@ -1,34 +1,59 @@
 use std::ops::Add;
-use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike};
+use std::fmt;
+use std::fmt::Formatter;
+use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike, Utc};
+use serde::{Deserialize, Serialize};
 use crate::models::{ConsumptionValues, ProductionValues, TariffValues};
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Tariffs {
     pub buy: [f64;24],
     pub length: usize,
-    pub offset: usize,
 }
 
 /// Available block types
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub enum BlockType {
     Charge,
     Hold,
     Use,
 }
 
+/// Implementation of the Display Trait for pretty print
+impl fmt::Display for BlockType {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            BlockType::Charge => write!(f, "Charge"),
+            BlockType::Hold   => write!(f, "Hold  "),
+            BlockType::Use    => write!(f, "Use   "),
+        }
+    }
+}
+
 /// Block status
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub enum Status {
     Waiting,
     Started,
-    Missed,
     Full(usize),
     Error,
 }
 
-#[derive(Clone, Debug)]
+/// Implementation of the Display Trait for pretty print
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Status::Waiting => write!(f, "Waiting  "),
+            Status::Started => write!(f, "Started  "),
+            Status::Full(soc) => write!(f, "Full: {:>3}", soc),
+            Status::Error   => write!(f, "Error    "),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Block {
+    block_id: usize,
     pub block_type: BlockType,
     pub start_time: DateTime<Local>,
     pub end_time: DateTime<Local>,
@@ -40,10 +65,43 @@ pub struct Block {
     pub charge_out: f64,
     pub soc_in: usize,
     pub soc_out: usize,
+    soc_kwh: f64,
     pub status: Status,
 }
 
-#[derive(Clone, Debug)]
+/// Implementation of the Display Trait for pretty print
+impl fmt::Display for Block {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        // Build base output
+        let output = format!("{} - {} -> {:>2} - {:>2}: SocIn {:>3}, SocOut {:>3}, chargeIn {:>5.2}, chargeOut {:>5.2}, cost {:>5.2} ",
+                             self.status, self.block_type,
+                             self.start_hour, self.end_hour,
+                             self.soc_in, self.soc_out,
+                             self.charge_in, self.charge_out,
+                             self.cost);
+
+        write!(f, "{}", output)
+    }
+}
+
+impl Block {
+    /// Updates the status of the block
+    ///
+    /// # Arguments
+    ///
+    /// * 'status' - the status to update with
+    pub fn update_block_status(&mut self, status: Status) {
+        if self.block_type == BlockType::Charge {
+            if let Status::Full(soc) = status {
+                self.soc_out = soc;
+                self.charge_out = (soc - 10) as f64 * self.soc_kwh;
+            }
+        }
+        self.status = status;
+    }
+}
+
+#[derive(Clone)]
 struct BlockInternal {
     block_type: BlockType,
     start_hour: usize,
@@ -61,7 +119,6 @@ struct BlockCollection {
     total_cost: f64,
 }
 
-#[derive(Debug)]
 struct PeriodMetrics {
     block_type: BlockType,
     start: usize,
@@ -80,7 +137,6 @@ pub struct Schedule {
     pub total_cost: f64,
     net_prod: [f64;24],
     cons: [f64;24],
-    bat_capacity: f64,
     bat_kwh: f64,
     soc_kwh: f64,
     charge_kwh_instance: f64,
@@ -94,19 +150,18 @@ impl Schedule {
     /// # Arguments
     ///
     /// * 'config' - configuration struct
-    pub fn new() -> Schedule {
+    /// * 'schedule_blocks' - any existing schedule blocks
+    pub fn new(schedule_blocks: Option<Vec<Block>>) -> Schedule {
         Schedule {
             date_time: Default::default(),
-            blocks: Vec::new(),
+            blocks: schedule_blocks.unwrap_or(Vec::new()),
             tariffs: Tariffs {
                 buy: [0.0; 24],
                 length: 0,
-                offset: 0,
             },
             total_cost: 0.0,
             net_prod: [0.0; 24],
             cons: [0.0; 24],
-            bat_capacity: 16.59,
             bat_kwh: 14.931,
             soc_kwh: 0.1659,
             charge_kwh_instance: 6.0,
@@ -115,17 +170,70 @@ impl Schedule {
         }
     }
 
+    /// Returns a block id of a block identified by hour
+    ///
+    /// # Arguments
+    ///
+    /// * 'date_time' - the time to get a block for
+    pub fn get_block_by_time(&self, date_time: DateTime<Local>) -> Option<usize> {
+        let date_hour = date_time.duration_trunc(TimeDelta::hours(1)).unwrap();
+        for b in self.blocks.iter() {
+            if b.start_time <= date_hour && b.end_time >= date_hour {
+                return Some(b.block_id);
+            }
+        }
+
+        None
+    }
+
+    /// Returns a mutable block identified by its block id
+    ///
+    /// # Arguments
+    ///
+    /// * 'block_ld' - id of the block
+    pub fn get_block_by_id(&mut self, block_id: usize) -> Option<&mut Block> {
+        self.blocks.iter_mut().find(|b| b.block_id == block_id)
+    }
+
+    /// Check if it is time to update to next step in schedule
+    ///
+    /// # Arguments
+    ///
+    /// * 'block_id' - id of the block to check
+    /// * 'date_time' - the date time the block is valid for
+    pub fn is_update_time(&self, block_id: usize, date_time: DateTime<Local>) -> bool {
+        let date_hour = date_time.duration_trunc(TimeDelta::hours(1)).unwrap();
+        let block = self.blocks.iter().find(|b| b.block_id == block_id);
+
+        block.is_none_or(|b| (b.start_time > date_hour || b.end_time < date_hour) ||
+            (b.start_time <= date_hour && b.end_time >= date_hour && b.status == Status::Waiting))
+    }
+
+    /// Check if we are in an active charge block and charging is still ongoing
+    ///
+    /// # Arguments
+    ///
+    /// * 'block_id' - id of the block to check
+    /// * 'date_time' - the date time the block is valid for
+    pub fn is_active_charging(&self, block_id: usize, date_time: DateTime<Local>) -> bool {
+        let date_hour = date_time.duration_trunc(TimeDelta::hours(1)).unwrap();
+        let block = self.blocks.iter().find(|b| b.block_id == block_id);
+
+        block.is_some_and(|b| b.start_time <= date_hour && b.end_time >= date_hour
+            && b.block_type == BlockType::Charge && b.status == Status::Started)
+    }
+
     /// Updates scheduling based on tariffs, production and consumption estimates.
-    /// It can also base the schedule on any residual charge.
+    /// It can also base the schedule on any residual charge (stated as soc).
     ///
     /// # Arguments
     ///
     /// * 'tariffs' - tariffs as given from NordPool
     /// * 'production' - production estimates per hour
     /// * 'consumption' - consumption estimates per hour
-    /// * 'charge_in' - any residual charge to bear in to the new schedule
+    /// * 'soc_in' - any residual charge to bear in to the new schedule (stated as soc 0-100)
     /// * 'date_time' - the date time to stamp on the schedule
-    pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValues>, production: &Vec<ProductionValues>, consumption: &Vec<ConsumptionValues>, charge_in: f64, date_time: DateTime<Local>) {
+    pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValues>, production: &Vec<ProductionValues>, consumption: &Vec<ConsumptionValues>, soc_in: u8, date_time: DateTime<Local>) {
         let date_hour = date_time.duration_trunc(TimeDelta::hours(1)).unwrap();
         let tariffs_in_scope: Vec<(f64, f64)> = tariffs.iter()
             .filter(|t| t.valid_time >= date_hour && t.valid_time < date_hour.add(TimeDelta::days(1)))
@@ -148,8 +256,10 @@ impl Schedule {
             .enumerate()
             .for_each(|(i, &p)| self.net_prod[i] = p - self.cons[i]);
 
+        let charge_in = (soc_in.max(10) - 10) as f64 * self.soc_kwh;
+
         self.date_time = date_time;
-        self.tariffs = self.transform_tariffs(&tariffs_in_scope, date_hour.hour() as usize);
+        self.tariffs = self.transform_tariffs(&tariffs_in_scope);
         let block_collection = self.seek_best(charge_in);
         self.blocks = create_result_blocks(block_collection.blocks, self.soc_kwh, date_time, date_hour.hour() as usize);
         self.total_cost = block_collection.total_cost;
@@ -171,7 +281,6 @@ impl Schedule {
 
         for seek_first_charge in 0..self.tariffs.length {
             for charge_level_first in (0..=90).step_by(5) {
-                println!("{} - {}", seek_first_charge, charge_level_first);
 
                 quad[0] = self.seek_charge(0, seek_first_charge, charge_level_first, charge_in);
 
@@ -179,6 +288,11 @@ impl Schedule {
                     for use_end_first in seek_first_use..=self.tariffs.length {
                         if let Some(first_use_collection) = self.seek_use(quad[0].next_start, seek_first_use, use_end_first, quad[0].next_charge_in) {
                             quad[1] = first_use_collection;
+
+                            if seek_first_charge == 4 && charge_level_first == 55 && seek_first_use == 8 && use_end_first == 24 {
+                                println!();
+                            }
+
                             best_record = self.record_best_collection(&quad[0..2], best_record);
 
                             for seek_second_charge in quad[1].next_start..self.tariffs.length {
@@ -211,8 +325,6 @@ impl Schedule {
     fn create_base_block_collection(&self, charge_in: f64) -> BlockCollection {
         let pm = self.update_for_pv(BlockType::Use, 0, self.tariffs.length, charge_in);
         let block = self.get_none_charge_block(&pm);
-
-        println!("{:?}", block);
 
         BlockCollection {
             next_start: self.tariffs.length,
@@ -292,7 +404,7 @@ impl Schedule {
             .map(|(i, t)| instance_charge[i] * t)
             .sum::<f64>();
 
-        (c_price, end)
+        ((c_price * 100.0).round() / 100.0, end)
     }
 
     /// Creates a charge block
@@ -395,6 +507,7 @@ impl Schedule {
                 .for_each(|(i, &np)| self.add_net_prod(i + start, np, &mut pm));
         }
 
+        pm.cost = (pm.cost * 100.0).round() / 100.0;
         pm
     }
 
@@ -435,8 +548,7 @@ impl Schedule {
     /// # Arguments
     ///
     /// * 'tariffs' - hourly prices from NordPool (excl VAT)
-    /// * 'offset' - the offset between first value in the arrays and actual start time
-    fn transform_tariffs(&self, tariffs: &Vec<(f64, f64)>, offset: usize) -> Tariffs {
+    fn transform_tariffs(&self, tariffs: &Vec<(f64, f64)>) -> Tariffs {
         let mut buy: [f64; 24] = [0.0; 24];
         tariffs.iter()
             .enumerate()
@@ -444,7 +556,7 @@ impl Schedule {
                 buy[i] = t.0;
             });
 
-        Tariffs { buy, length: tariffs.len(), offset }
+        Tariffs { buy, length: tariffs.len() }
     }
 
     /// Returns the best block collection compared between the latest results and the stored best
@@ -527,16 +639,21 @@ fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: Dat
             start_hour -= 24;
             start_time = start_time.add(TimeDelta::days(1));
         }
+
         let mut end_hour = b.start_hour + b.size - 1 + offset;
         if end_hour > 23 {
             end_hour -= 24;
             end_time = end_time.add(TimeDelta::days(1));
         }
 
+        start_time = start_time.with_hour(start_hour as u32).unwrap();
+        end_time = end_time.with_hour(end_hour as u32).unwrap();
+
         result.push(Block {
+            block_id: start_time.with_timezone(&Utc).timestamp() as usize,
             block_type: b.block_type.clone(),
-            start_time: start_time.with_hour(start_hour as u32).unwrap(),
-            end_time: end_time.with_hour(end_hour as u32).unwrap(),
+            start_time,
+            end_time,
             start_hour,
             end_hour,
             size: b.size,
@@ -545,6 +662,7 @@ fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: Dat
             charge_out: b.charge_out,
             soc_in: 10 + (b.charge_in / soc_kwh).round().min(90.0) as usize,
             soc_out: 10 + (b.charge_out / soc_kwh).round().min(90.0) as usize,
+            soc_kwh,
             status: Status::Waiting,
         });
     }
