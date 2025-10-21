@@ -5,9 +5,11 @@ use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use crate::models::{ConsumptionValues, ProductionValues, TariffValues};
 
+const TIME_BLOCKS: usize = 96;
+
 #[derive(Debug)]
 pub struct Tariffs {
-    pub buy: [f64;96],
+    pub buy: [f64;TIME_BLOCKS],
     pub length: usize,
 }
 
@@ -137,8 +139,8 @@ pub struct Schedule {
     pub blocks: Vec<Block>,
     pub tariffs: Tariffs,
     pub total_cost: f64,
-    net_prod: [f64;96],
-    cons: [f64;96],
+    net_prod: [f64;TIME_BLOCKS],
+    cons: [f64;TIME_BLOCKS],
     bat_kwh: f64,
     soc_kwh: f64,
     charge_kwh_instance: f64,
@@ -158,12 +160,12 @@ impl Schedule {
             date_time: Default::default(),
             blocks: schedule_blocks.unwrap_or(Vec::new()),
             tariffs: Tariffs {
-                buy: [0.0; 96],
+                buy: [0.0; TIME_BLOCKS],
                 length: 0,
             },
             total_cost: 0.0,
-            net_prod: [0.0; 96],
-            cons: [0.0; 96],
+            net_prod: [0.0; TIME_BLOCKS],
+            cons: [0.0; TIME_BLOCKS],
             bat_kwh: 14.931,
             soc_kwh: 0.1659,
             charge_kwh_instance: 6.0 / 4.0,
@@ -243,7 +245,7 @@ impl Schedule {
             .collect::<Vec<(f64, f64)>>();
         let allowed_length = tariffs_in_scope.len() as i64;
 
-        let mut prod: [f64; 96] = [0.0; 96];
+        let mut prod: [f64; TIME_BLOCKS] = [0.0; TIME_BLOCKS];
         production.iter()
             .filter(|p| p.valid_time >= date_hour && p.valid_time < date_hour.add(TimeDelta::hours(allowed_length)))
             .enumerate()
@@ -551,7 +553,7 @@ impl Schedule {
     ///
     /// * 'tariffs' - hourly prices from NordPool (excl VAT)
     fn transform_tariffs(&self, tariffs: &Vec<(f64, f64)>) -> Tariffs {
-        let mut buy: [f64; 96] = [0.0; 96];
+        let mut buy: [f64; TIME_BLOCKS] = [0.0; TIME_BLOCKS];
         tariffs.iter()
             .enumerate()
             .for_each(|(i, &t)| {
