@@ -1,12 +1,13 @@
 use std::{env, fs};
 use std::ops::Add;
-use chrono::TimeDelta;
+use chrono::{Local, TimeDelta};
 use rayon::ThreadPoolBuilder;
 use crate::models::{BackupData, ConsumptionValues, ProductionValues, TariffValues};
 use crate::scheduler::Schedule;
 
 mod scheduler;
 mod models;
+mod manager_nordpool;
 
 fn main() {
     ThreadPoolBuilder::new().num_threads(2).build_global().unwrap();
@@ -21,9 +22,16 @@ fn main() {
         .1;
 
     let data = load_data(config_path);
-    let tariffs = tariffs_to_15_minute_step(data.tariffs);
+    //let tariffs = tariffs_to_15_minute_step(data.tariffs);
     let production = production_to_15_minute_step(data.production);
     let consumption = consumption_to_15_minute_step(data.consumption);
+    
+    let nordpool = manager_nordpool::NordPool::new();
+    let tariffs = if let Ok(t) = nordpool.get_tariffs(Local::now()) {
+        t
+    } else {
+        panic!("Failed to get tariffs from NordPool");
+    };
 
     let mut s = Schedule::new(None);
     //s.update_scheduling(&data.tariffs, &data.production, &data.consumption, 4.48, data.date_time);
