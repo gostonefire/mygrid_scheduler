@@ -4,6 +4,8 @@ use std::fmt::Formatter;
 use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use crate::models::{ConsumptionValues, ProductionValues, TariffValues};
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 
 const TIME_BLOCKS: usize = 96;
 
@@ -115,7 +117,7 @@ struct BlockInternal {
     charge_out: f64,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct BlockCollection {
     blocks: Vec<BlockInternal>,
     next_start: usize,
@@ -264,9 +266,47 @@ impl Schedule {
 
         self.date_time = date_time;
         self.tariffs = self.transform_tariffs(&tariffs_in_scope);
-        let block_collection = self.seek_best(charge_in);
+        let block_collection = self.parallel_search(charge_in);
         self.blocks = create_result_blocks(block_collection.blocks, self.soc_kwh, date_time, date_hour.hour() as usize);
         self.total_cost = block_collection.total_cost;
+    }
+
+    fn parallel_search(&self, charge_in: f64) -> BlockCollection {
+
+        println!("{}", Local::now());
+        let mut best_record: BlockCollection = self.create_base_block_collection(charge_in);
+
+        let bcs = (0..self.tariffs.length).into_par_iter()
+            .map(|seek_first_charge| self.seek_best(charge_in, seek_first_charge, best_record.clone()))
+            .collect::<Vec<BlockCollection>>();
+
+        for bc in bcs {
+            if bc.total_cost < best_record.total_cost {
+                best_record = bc;
+            } else if bc.total_cost == best_record.total_cost {
+                if bc.blocks.len() < best_record.blocks.len() {
+                    best_record = bc;
+                }
+            }
+        }
+        println!("{}", Local::now());
+
+        /*
+        for seek_first_charge in 0..self.tariffs.length {
+            let bc = self.seek_best(charge_in, seek_first_charge, best_record.clone());
+            if bc.total_cost < best_record.total_cost {
+                best_record = bc;
+            } else if bc.total_cost == best_record.total_cost {
+                if bc.blocks.len() < best_record.blocks.len() {
+                    best_record = bc;
+                }
+            }
+
+        }
+
+         */
+
+        best_record
     }
 
     /// Seeks the best schedule given input parameters.
@@ -278,37 +318,36 @@ impl Schedule {
     /// # Arguments
     ///
     /// * 'charge_in' - any residual charge to bear in to the new schedule
-    fn seek_best(&self, charge_in: f64) -> BlockCollection {
+    /// * 'seek_first_charge' - time block to start search from
+    /// * 'best_record' - the initial best record to compare with
+    fn seek_best(&self, charge_in: f64, seek_first_charge: usize, mut best_record: BlockCollection) -> BlockCollection {
         let mut quad: [BlockCollection; 4] = [Default::default(), Default::default(), Default::default(), Default::default()];
+        //println!("{:02}", seek_first_charge);
 
-        let mut best_record: BlockCollection = self.create_base_block_collection(charge_in);
+        for charge_level_first in (0..=90).step_by(5) {
+            //println!("{:02} {:02}", seek_first_charge, charge_level_first);
 
-        for seek_first_charge in 0..self.tariffs.length {
-            for charge_level_first in (0..=90).step_by(5) {
-                println!("{:02} {:02}", seek_first_charge, charge_level_first);
+            quad[0] = self.seek_charge(0, seek_first_charge, charge_level_first, charge_in);
 
-                quad[0] = self.seek_charge(0, seek_first_charge, charge_level_first, charge_in);
+            for seek_first_use in quad[0].next_start..self.tariffs.length {
+                for use_end_first in seek_first_use..=self.tariffs.length {
+                    if let Some(first_use_collection) = self.seek_use(quad[0].next_start, seek_first_use, use_end_first, quad[0].next_charge_in) {
+                        quad[1] = first_use_collection;
 
-                for seek_first_use in quad[0].next_start..self.tariffs.length {
-                    for use_end_first in seek_first_use..=self.tariffs.length {
-                        if let Some(first_use_collection) = self.seek_use(quad[0].next_start, seek_first_use, use_end_first, quad[0].next_charge_in) {
-                            quad[1] = first_use_collection;
+                        //if seek_first_charge == 17 && charge_level_first == 55 && seek_first_use == 32 && use_end_first == 96 {
+                        //    println!();
+                        //}
 
-                            //if seek_first_charge == 17 && charge_level_first == 55 && seek_first_use == 32 && use_end_first == 96 {
-                            //    println!();
-                            //}
+                        best_record = self.record_best_collection(&quad[0..2], best_record);
 
-                            best_record = self.record_best_collection(&quad[0..2], best_record);
+                        for seek_second_charge in quad[1].next_start..self.tariffs.length {
+                            for charge_level_second in (0..=90).step_by(5) {
+                                quad[2] = self.seek_charge(quad[1].next_start, seek_second_charge, charge_level_second, quad[1].next_charge_in);
 
-                            for seek_second_charge in quad[1].next_start..self.tariffs.length {
-                                for charge_level_second in (0..=90).step_by(5) {
-                                    quad[2] = self.seek_charge(quad[1].next_start, seek_second_charge, charge_level_second, quad[1].next_charge_in);
-
-                                    for seek_second_use in quad[2].next_start..self.tariffs.length {
-                                        if let Some(second_use_blocks) = self.seek_use(quad[2].next_start, seek_second_use, self.tariffs.length, quad[2].next_charge_in) {
-                                            quad[3] = second_use_blocks;
-                                            best_record = self.record_best_collection(&quad, best_record);
-                                        }
+                                for seek_second_use in quad[2].next_start..self.tariffs.length {
+                                    if let Some(second_use_blocks) = self.seek_use(quad[2].next_start, seek_second_use, self.tariffs.length, quad[2].next_charge_in) {
+                                        quad[3] = second_use_blocks;
+                                        best_record = self.record_best_collection(&quad, best_record);
                                     }
                                 }
                             }

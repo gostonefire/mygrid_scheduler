@@ -1,6 +1,7 @@
 use std::{env, fs};
 use std::ops::Add;
 use chrono::TimeDelta;
+use rayon::ThreadPoolBuilder;
 use crate::models::{BackupData, ConsumptionValues, ProductionValues, TariffValues};
 use crate::scheduler::Schedule;
 
@@ -8,6 +9,8 @@ mod scheduler;
 mod models;
 
 fn main() {
+    ThreadPoolBuilder::new().num_threads(2).build_global().unwrap();
+    
     let args: Vec<String> = env::args().collect();
     let config_path = args.iter()
         .find(|p| p.starts_with("--config="))
