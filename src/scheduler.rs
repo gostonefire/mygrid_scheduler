@@ -3,9 +3,9 @@ use std::fmt;
 use std::fmt::Formatter;
 use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike, Utc};
 use serde::{Deserialize, Serialize};
-use crate::models::{ConsumptionValues, ProductionValues, TariffValues};
+use crate::common::models::{PowerValue, TariffValue};
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
+use crate::config::ChargeParameters;
 
 const TIME_BLOCKS: usize = 96;
 
@@ -69,6 +69,7 @@ pub struct Block {
     pub cost: f64,
     pub charge_in: f64,
     pub charge_out: f64,
+    pub true_soc_in: Option<usize>,
     pub soc_in: usize,
     pub soc_out: usize,
     soc_kwh: f64,
@@ -87,23 +88,6 @@ impl fmt::Display for Block {
                              self.cost);
 
         write!(f, "{}", output)
-    }
-}
-
-impl Block {
-    /// Updates the status of the block
-    ///
-    /// # Arguments
-    ///
-    /// * 'status' - the status to update with
-    pub fn update_block_status(&mut self, status: Status) {
-        if self.block_type == BlockType::Charge {
-            if let Status::Full(soc) = status {
-                self.soc_out = soc;
-                self.charge_out = (soc - 10) as f64 * self.soc_kwh;
-            }
-        }
-        self.status = status;
     }
 }
 
@@ -141,6 +125,7 @@ pub struct Schedule {
     pub blocks: Vec<Block>,
     pub tariffs: Tariffs,
     pub total_cost: f64,
+    pub base_cost: f64,
     net_prod: [f64;TIME_BLOCKS],
     cons: [f64;TIME_BLOCKS],
     bat_kwh: f64,
@@ -157,7 +142,7 @@ impl Schedule {
     ///
     /// * 'config' - configuration struct
     /// * 'schedule_blocks' - any existing schedule blocks
-    pub fn new(schedule_blocks: Option<Vec<Block>>) -> Schedule {
+    pub fn new(config: &ChargeParameters, schedule_blocks: Option<Vec<Block>>) -> Schedule {
         Schedule {
             date_time: Default::default(),
             blocks: schedule_blocks.unwrap_or(Vec::new()),
@@ -166,13 +151,14 @@ impl Schedule {
                 length: 0,
             },
             total_cost: 0.0,
+            base_cost: 0.0,
             net_prod: [0.0; TIME_BLOCKS],
             cons: [0.0; TIME_BLOCKS],
-            bat_kwh: 14.931,
-            soc_kwh: 0.1659,
-            charge_kwh_instance: 6.0 / 4.0,
-            charge_efficiency: 0.9,
-            discharge_efficiency: 0.9,
+            bat_kwh: config.bat_kwh,
+            soc_kwh: config.soc_kwh,
+            charge_kwh_instance: config.charge_kwh_hour,
+            charge_efficiency: config.charge_efficiency,
+            discharge_efficiency: config.discharge_efficiency,
         }
     }
 
@@ -228,7 +214,13 @@ impl Schedule {
         block.is_some_and(|b| b.start_time <= date_hour && b.end_time >= date_hour
             && b.block_type == BlockType::Charge && b.status == Status::Started)
     }
-
+    
+    /// Returns configured kwh per SoC unit
+    /// 
+    pub fn get_soc_kwh(&self) -> f64 {
+        self.soc_kwh
+    }
+    
     /// Updates scheduling based on tariffs, production and consumption estimates.
     /// It can also base the schedule on any residual charge (stated as soc).
     ///
@@ -239,7 +231,7 @@ impl Schedule {
     /// * 'consumption' - consumption estimates per hour
     /// * 'soc_in' - any residual charge to bear in to the new schedule (stated as soc 0-100)
     /// * 'date_time' - the date time to stamp on the schedule
-    pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValues>, production: &Vec<ProductionValues>, consumption: &Vec<ConsumptionValues>, soc_in: u8, date_time: DateTime<Local>) {
+    pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValue>, production: &Vec<PowerValue>, consumption: &Vec<PowerValue>, soc_in: u8, date_time: DateTime<Local>) {
         let date_hour = date_time.duration_trunc(TimeDelta::hours(1)).unwrap();
         let tariffs_in_scope: Vec<(f64, f64)> = tariffs.iter()
             .filter(|t| t.valid_time >= date_hour && t.valid_time < date_hour.add(TimeDelta::days(1)))
@@ -271,7 +263,7 @@ impl Schedule {
         self.total_cost = block_collection.total_cost;
     }
 
-    fn parallel_search(&self, charge_in: f64) -> BlockCollection {
+    fn parallel_search(&mut self, charge_in: f64) -> BlockCollection {
 
         println!("{}", Local::now());
         let mut best_record: BlockCollection = self.create_base_block_collection(charge_in);
@@ -366,14 +358,15 @@ impl Schedule {
     /// # Arguments
     ///
     /// * 'charge_in' - residual charge from the previous block
-    fn create_base_block_collection(&self, charge_in: f64) -> BlockCollection {
+    fn create_base_block_collection(&mut self, charge_in: f64) -> BlockCollection {
         let pm = self.update_for_pv(BlockType::Use, 0, self.tariffs.length, charge_in);
         let block = self.get_none_charge_block(&pm);
-
+        self.base_cost = (block.cost * 100.0).round() / 100.0;
+        
         BlockCollection {
             next_start: self.tariffs.length,
             next_charge_in: block.charge_out,
-            total_cost: (block.cost * 100.0).round() / 100.0,
+            total_cost: self.base_cost,
             blocks: vec![block],
         }
     }
@@ -709,6 +702,7 @@ fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: Dat
             cost: b.cost,
             charge_in: b.charge_in,
             charge_out: b.charge_out,
+            true_soc_in: None,
             soc_in: 10 + (b.charge_in / soc_kwh).round().min(90.0) as usize,
             soc_out: 10 + (b.charge_out / soc_kwh).round().min(90.0) as usize,
             soc_kwh,
