@@ -1,6 +1,7 @@
+use std::collections::HashSet;
 use std::thread;
 use std::ops::Add;
-use chrono::{DateTime, DurationRound, Local, NaiveTime, TimeDelta, Timelike};
+use chrono::{DateTime, Datelike, DurationRound, Local, NaiveTime, TimeDelta, Timelike};
 use rayon::ThreadPoolBuilder;
 use anyhow::Result;
 use log::{error, info};
@@ -53,7 +54,7 @@ fn main() -> Result<()> {
 ///
 /// * 'mgr' - struct with configured managers
 fn run(mgr: &mut Mgr) -> Result<()> {
-    //let run_start = DateTime::parse_from_rfc3339("2025-10-30T20:59:00+01:00")?.with_timezone(&Local);
+    let run_start = DateTime::parse_from_rfc3339("2025-10-30T23:30:00+01:00")?.with_timezone(&Local);
 
     // The run start is always assumed to be at call of this function, the schedule start, however,
     // is assumed to be some x minutes in the future since it takes quite a while to calculate.
@@ -61,7 +62,7 @@ fn run(mgr: &mut Mgr) -> Result<()> {
     // * If the run starts before 21:00, we calculate a schedule for the rest of the current day.
     // * if the run starts at or after 23:15, we add one hour and cannibalize from the next day (1395 is the minute of the day for 23:15).
     // * Otherwise, we calculate a schedule for the entire next day
-    let run_start = Local::now();
+    //let run_start = Local::now();
     let schedule_start = if run_start.hour() < 21 || run_start.hour() * 60 + run_start.minute() >= 1395 {
         run_start.add(TimeDelta::hours(1)).duration_trunc(TimeDelta::minutes(15))?
     } else {
@@ -94,33 +95,39 @@ fn estimate_soc_in(mgr: &mut Mgr, run_start: DateTime<Local>, schedule_start: Da
         return Err(SchedulingError("Schedule start is in the past".to_string()))?;
     }
 
-    //calculate production and consumption during the day that run_start falls into
-    let forecast = retry!(||mgr.forecast.new_forecast(run_start))?;
-    let production = mgr.pv.estimate(&forecast, run_start)?;
-    let consumption = mgr.cons.estimate(&forecast, run_start)?.minute_values()?;
-
-
     // Get the current state of charge from Fox Cloud
     let soc_in = retry!(||mgr.fox.get_current_soc())?;
 
-    // Calculate the span in minutes between the run start and the schedule start
-    // If the schedule start is the next day, it is assumed to be midnight (00:00)
-    let minute_start = (run_start.hour() * 60 + run_start.minute()) as usize;
-    let minute_end = if schedule_start.date_naive() == run_start.date_naive() {
-        (schedule_start.hour() * 60 + schedule_start.minute()) as usize
-    } else {
-        1440
+    // Calculate the time span between the run start and the schedule start
+    // This can involve one or two days, depending on whether the run start falls into the same day as the schedule start
+    let mut dates: Vec<(DateTime<Local>, usize, usize)> = vec![(run_start, (run_start.hour() * 60 + run_start.minute()) as usize, 1440)];
+    if run_start.day() == schedule_start.day() {
+        dates = vec![(run_start, (run_start.hour() * 60 + run_start.minute()) as usize, (schedule_start.hour() * 60 + schedule_start.minute()) as usize)];
+    } else if schedule_start.hour() != 0 || schedule_start.minute() != 0 {
+        dates.push((schedule_start, 0, (schedule_start.hour() * 60 + schedule_start.minute()) as usize));
     };
 
-    // Calculate the power used in the time span between the run start and the schedule start
-    // The power used is divided by the number of minutes to get the average power used per hour
-    let power_used = (minute_start..minute_end).fold(0f64, |acc, i|
-        acc + (production.data[i] - consumption.data[i])) / 1000.0 / 60.0;
+    // Loop through all the dates and calculate the power used during the day and sum it up
+    let mut power_used = 0f64;
+    let mut minutes: usize = 0;
+    for date in dates {
+        // Calculate production and consumption during the day that run_start falls into
+        let forecast = retry!(||mgr.forecast.new_forecast(date.0))?;
+        let production = mgr.pv.estimate(&forecast, date.0)?;
+        let consumption = mgr.cons.estimate(&forecast, date.0)?.minute_values()?;
+
+        // Calculate the power used in the time span between the run start and the schedule start
+        // The power used is divided by the number of minutes to get the average power used per hour
+        power_used += (date.1..date.2).fold(0f64, |acc, i|
+            acc + (production.data[i] - consumption.data[i])) / 1000.0 / 60.0;
+
+        minutes += date.2 - date.1;
+    }
 
     // Calculate the expected SoC at the start of the schedule.
     // 10% is the lowest SoC that the battery accepts; anything below is considered 10%
     let start_soc = (soc_in as i8 + (power_used / mgr.schedule.get_soc_kwh()) as i8).max(10) as u8;
-    info!("Soc In: {}, Start SoC: {}, Power Used: {}, Minutes: {}", soc_in, start_soc, power_used, minute_end - minute_start);
+    info!("Soc In: {}, Start SoC: {}, Power Used: {}, Minutes: {}", soc_in, start_soc, power_used, minutes);
     Ok(start_soc)
 }
 
