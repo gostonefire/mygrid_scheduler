@@ -16,6 +16,8 @@ log4rs = "1.4"
 log = "0.4"
 toml = "0.9"
 md-5 = "0.10.6"
+thiserror = "2.0"
+anyhow = "1.0"
 
 [profile.release]
 # debug = true

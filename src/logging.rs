@@ -3,7 +3,7 @@ use log4rs::append::file::FileAppender;
 use log4rs::config::{Appender, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use log::LevelFilter;
-use crate::errors::ConfigError;
+use anyhow::Result;
 
 /// Sets up the logger
 ///
@@ -12,7 +12,7 @@ use crate::errors::ConfigError;
 /// * 'log_path' - path where to save logs
 /// * 'log_level' - log level
 /// * 'log_to_stdout' - whether to log to stdout or not
-pub fn setup_logger(log_path: &str, log_level: LevelFilter, log_to_stdout: bool) -> Result<(), ConfigError> {
+pub fn setup_logger(log_path: &str, log_level: LevelFilter, log_to_stdout: bool) -> Result<()> {
     let stdout = ConsoleAppender::builder()
         .encoder(Box::new(PatternEncoder::new("[{d(%Y-%m-%dT%H:%M:%S):0<19}{d(%:z)} {l} {M}] - {m}{n}")))
         .build();

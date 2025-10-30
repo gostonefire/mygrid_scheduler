@@ -3,7 +3,7 @@ use std::fmt;
 use std::fmt::Formatter;
 use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike, Utc};
 use serde::{Deserialize, Serialize};
-use crate::common::models::{PowerValue, TariffValue};
+use crate::common::models::{TimeValue, TariffValue};
 use rayon::prelude::*;
 use crate::config::ChargeParameters;
 
@@ -231,24 +231,24 @@ impl Schedule {
     /// * 'consumption' - consumption estimates per hour
     /// * 'soc_in' - any residual charge to bear in to the new schedule (stated as soc 0-100)
     /// * 'date_time' - the date time to stamp on the schedule
-    pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValue>, production: &Vec<PowerValue>, consumption: &Vec<PowerValue>, soc_in: u8, date_time: DateTime<Local>) {
-        let date_hour = date_time.duration_trunc(TimeDelta::hours(1)).unwrap();
+    pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValue>, production: &Vec<TimeValue>, consumption: &Vec<TimeValue>, soc_in: u8, date_time: DateTime<Local>) {
+        let start_time = date_time.duration_trunc(TimeDelta::minutes(15)).unwrap();
+        let end_time = date_time.add(TimeDelta::days(1)).duration_trunc(TimeDelta::days(1)).unwrap();
         let tariffs_in_scope: Vec<(f64, f64)> = tariffs.iter()
-            .filter(|t| t.valid_time >= date_hour && t.valid_time < date_hour.add(TimeDelta::days(1)))
+            .filter(|t| t.valid_time >= start_time && t.valid_time < end_time)
             .map(|t| (t.buy, t.sell))
             .collect::<Vec<(f64, f64)>>();
-        let allowed_length = tariffs_in_scope.len() as i64;
-
+        
         let mut prod: [f64; TIME_BLOCKS] = [0.0; TIME_BLOCKS];
         production.iter()
-            .filter(|p| p.valid_time >= date_hour && p.valid_time < date_hour.add(TimeDelta::hours(allowed_length)))
+            .filter(|p| p.valid_time >= start_time && p.valid_time < end_time)
             .enumerate()
-            .for_each(|(i, p)| prod[i] = p.power / 1000.0);
+            .for_each(|(i, p)| prod[i] = p.data / 1000.0);
 
         consumption.iter()
-            .filter(|c| c.valid_time >= date_hour && c.valid_time < date_hour.add(TimeDelta::hours(allowed_length)))
+            .filter(|c| c.valid_time >= start_time && c.valid_time < end_time)
             .enumerate()
-            .for_each(|(i, p)| self.cons[i] = p.power / 1000.0);
+            .for_each(|(i, p)| self.cons[i] = p.data / 1000.0);
 
         prod.iter()
             .enumerate()
@@ -259,13 +259,11 @@ impl Schedule {
         self.date_time = date_time;
         self.tariffs = self.transform_tariffs(&tariffs_in_scope);
         let block_collection = self.parallel_search(charge_in);
-        self.blocks = create_result_blocks(block_collection.blocks, self.soc_kwh, date_time, date_hour.hour() as usize);
+        self.blocks = create_result_blocks(block_collection.blocks, self.soc_kwh, start_time);
         self.total_cost = block_collection.total_cost;
     }
 
     fn parallel_search(&mut self, charge_in: f64) -> BlockCollection {
-
-        println!("{}", Local::now());
         let mut best_record: BlockCollection = self.create_base_block_collection(charge_in);
 
         let bcs = (0..self.tariffs.length).into_par_iter()
@@ -281,22 +279,6 @@ impl Schedule {
                 }
             }
         }
-        println!("{}", Local::now());
-
-        /*
-        for seek_first_charge in 0..self.tariffs.length {
-            let bc = self.seek_best(charge_in, seek_first_charge, best_record.clone());
-            if bc.total_cost < best_record.total_cost {
-                best_record = bc;
-            } else if bc.total_cost == best_record.total_cost {
-                if bc.blocks.len() < best_record.blocks.len() {
-                    best_record = bc;
-                }
-            }
-
-        }
-
-         */
 
         best_record
     }
@@ -314,21 +296,14 @@ impl Schedule {
     /// * 'best_record' - the initial best record to compare with
     fn seek_best(&self, charge_in: f64, seek_first_charge: usize, mut best_record: BlockCollection) -> BlockCollection {
         let mut quad: [BlockCollection; 4] = [Default::default(), Default::default(), Default::default(), Default::default()];
-        //println!("{:02}", seek_first_charge);
 
         for charge_level_first in (0..=90).step_by(5) {
-            //println!("{:02} {:02}", seek_first_charge, charge_level_first);
-
             quad[0] = self.seek_charge(0, seek_first_charge, charge_level_first, charge_in);
 
             for seek_first_use in quad[0].next_start..self.tariffs.length {
                 for use_end_first in seek_first_use..=self.tariffs.length {
                     if let Some(first_use_collection) = self.seek_use(quad[0].next_start, seek_first_use, use_end_first, quad[0].next_charge_in) {
                         quad[1] = first_use_collection;
-
-                        //if seek_first_charge == 17 && charge_level_first == 55 && seek_first_use == 32 && use_end_first == 96 {
-                        //    println!();
-                        //}
 
                         best_record = self.record_best_collection(&quad[0..2], best_record);
 
@@ -663,24 +638,24 @@ impl Schedule {
 /// * 'blocks' - a vector of temporary internal blocks
 /// * 'soc_kwh' - kWh per soc used to convert from charge to State of Charge
 /// * 'date_time' - the date and time to be used to convert from hours to datetime in local TZ
-/// * 'offset' - the offset to apply
-fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: DateTime<Local>, offset: usize) -> Vec<Block> {
+fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: DateTime<Local>) -> Vec<Block> {
     let mut result: Vec<Block> = Vec::new();
     let time = date_time.duration_trunc(TimeDelta::days(1)).unwrap();
+    let offset = ((date_time - time).num_minutes() / 15) as usize;
 
     for b in blocks {
         let mut start_time = time;
         let mut end_time = time;
 
-        let mut start_hour = b.start_hour / 4 + offset;
-        let start_minute = b.start_hour % 4 * 15;
+        let mut start_hour = (b.start_hour + offset) / 4;
+        let start_minute = (b.start_hour + offset) % 4 * 15;
         if start_hour > 23 {
             start_hour -= 24;
             start_time = start_time.add(TimeDelta::days(1));
         }
 
-        let mut end_hour = (b.start_hour + b.size - 1) / 4 + offset;
-        let end_minute = (b.start_hour + b.size - 1) % 4 * 15;
+        let mut end_hour = ((b.start_hour + offset) + b.size - 1) / 4;
+        let end_minute = ((b.start_hour + offset) + b.size - 1) % 4 * 15;
         if end_hour > 23 {
             end_hour -= 24;
             end_time = end_time.add(TimeDelta::days(1));

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Datelike, Local, Timelike};
-use serde::Serialize;
+use anyhow::Result;
 use crate::config::ConsumptionParameters;
-use crate::common::models::{ForecastValue, ForecastValues, PowerValue, PowerValues};
+use crate::common::models::{ForecastValues, TimeValue, TimeValues};
 use crate::spline::MonotonicCubicSpline;
 
 
@@ -41,33 +41,23 @@ impl Consumption {
         }
     }
     
-    /// Calculate and return new hourly consumption estimates
-    /// 
-    /// # Arguments
-    /// 
-    /// * 'forecast' - whether forecast from SMHI
-    /// * 'date_time' - the date to calculate for
-    pub fn estimate(&mut self, forecast: &ForecastValues, date_time: DateTime<Local>) -> PowerValues {
-        self.calculate_consumption(forecast, date_time)
-    }
-
     /// Calculates hourly household consumption based on temperature forecast
     ///
     /// # Arguments
     ///
     /// * 'forecast' - the temperature forecast
     /// * 'date_time' - the date to calculate for
-    fn calculate_consumption(&self, forecast: &ForecastValues, date_time: DateTime<Local>) -> PowerValues {
-        let mut power: Vec<PowerValue> = Vec::new();
+    pub fn estimate(&self, forecast: &ForecastValues, date_time: DateTime<Local>) -> Result<TimeValues> {
+        let mut power: TimeValues = TimeValues::new(date_time);
 
         for v in forecast.forecast.iter().filter(|v| v.valid_time.date_naive() == date_time.date_naive()) {
             let week_day = v.valid_time.weekday().num_days_from_monday() as usize;
             let hour = v.valid_time.hour() as usize;
             let power_per_hour = self.consumption_curve(v.temp) + self.diagram[week_day][hour];
-            power.push(PowerValue { valid_time: v.valid_time, power: power_per_hour });
+            power.push(TimeValue { valid_time: v.valid_time, data: power_per_hour })?;
         }
 
-        PowerValues { power }
+        Ok(power)
     }
 
     /// Calculates consumption based on temperature over an estimated curve.

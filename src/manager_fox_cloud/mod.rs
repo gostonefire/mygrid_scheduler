@@ -1,4 +1,5 @@
 pub mod errors;
+mod models;
 
 use std::str::FromStr;
 use std::time::Duration;
@@ -7,9 +8,10 @@ use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use ureq::Agent;
 use ureq::http::{HeaderMap, HeaderName, HeaderValue};
+use anyhow::Result;
 use crate::config::FoxESS;
 use crate::manager_fox_cloud::errors::FoxError;
-use crate::common::models::{SocCurrentResult, RequestCurrentSoc};
+use crate::manager_fox_cloud::models::{RequestCurrentSoc, SocCurrentResult};
 
 const REQUEST_DOMAIN: &str = "https://www.foxesscloud.com";
 
@@ -42,7 +44,7 @@ impl Fox {
     ///
     /// # Arguments
     ///
-    pub fn get_current_soc(&self) -> Result<u8, FoxError> {
+    pub fn get_current_soc(&self) -> Result<u8> {
         let path = "/op/v0/device/real/query";
 
         let req = RequestCurrentSoc { sn: self.sn.clone(), variables: vec!["SoC".to_string()] };
@@ -64,11 +66,11 @@ impl Fox {
     ///
     /// * path - the API path excluding the domain
     /// * body - a string containing the payload in JSON format
-    fn post_request(&self, path: &str, body: String) -> Result<String, FoxError> {
+    fn post_request(&self, path: &str, body: String) -> Result<String> {
         let url = format!("{}{}", REQUEST_DOMAIN, path);
 
         let mut req = self.agent.post(url);
-        let headers = req.headers_mut().ok_or(FoxError::FoxCloud("RequestBuilder Error".to_string()))?;
+        let headers = req.headers_mut().ok_or(FoxError("RequestBuilder Error".into()))?;
         self.generate_headers(headers, &path, Some(vec!(("Content-Type", "application/json"))));
 
         let json = req
@@ -78,7 +80,7 @@ impl Fox {
 
         let fox_res: FoxResponse = serde_json::from_str(&json)?;
         if fox_res.errno != 0 {
-            return Err(FoxError::FoxCloud(format!("errno: {}, msg: {}", fox_res.errno, fox_res.msg)));
+            return Err(FoxError(format!("errno: {}, msg: {}", fox_res.errno, fox_res.msg)))?;
         }
 
         Ok(json)

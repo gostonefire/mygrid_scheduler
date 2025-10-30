@@ -1,9 +1,8 @@
 use std::env;
 use log::info;
-use crate::LOGGER_INITIALIZED;
+use anyhow::Result;
 use crate::config::{load_config, Config};
 use crate::consumption::Consumption;
-use crate::errors::{MyGridInitError};
 use crate::logging::setup_logger;
 use crate::manager_forecast::Forecast;
 use crate::manager_fox_cloud::Fox;
@@ -25,7 +24,7 @@ pub struct Mgr {
 /// Initializes and returns configuration, a Mgr struct holding various of initialized structs, 
 /// an optional LastCharge struct, and an optional active block
 ///
-pub fn init() -> Result<(Config, Mgr), MyGridInitError> {
+pub fn init() -> Result<(Config, Mgr)> {
     let args: Vec<String> = env::args().collect();
     let config_path = args.iter()
         .find(|p| p.starts_with("--config="))
@@ -40,13 +39,11 @@ pub fn init() -> Result<(Config, Mgr), MyGridInitError> {
     let config = load_config(&config_path)?;
 
     // Setup logging
-    if !*LOGGER_INITIALIZED.read()? {
-        let _ = setup_logger(&config.general.log_path, config.general.log_level, config.general.log_to_stdout)?;
-    }
-    *LOGGER_INITIALIZED.write()? = true;
+    let _ = setup_logger(&config.general.log_path, config.general.log_level, config.general.log_to_stdout)?;
+
 
     // Print version
-    info!("mygrid scheduler version: {}", env!("CARGO_PKG_VERSION"));
+    info!("starting mygrid scheduler version: {}", env!("CARGO_PKG_VERSION"));
 
     
     // Instantiate structs

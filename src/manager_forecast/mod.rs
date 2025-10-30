@@ -1,12 +1,14 @@
 pub mod errors;
+mod models;
 
-use std::ops::Add;
 use std::time::Duration;
 use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike};
 use ureq::Agent;
+use anyhow::Result;
 use crate::config::Config;
 use crate::manager_forecast::errors::ForecastError;
-use crate::common::models::{ForecastRecord, ForecastValue, ForecastValues};
+use crate::common::models::{ForecastValue, ForecastValues};
+use crate::manager_forecast::models::ForecastRecord;
 
 /// Struct for managing whether forecasts
 pub struct Forecast {
@@ -45,8 +47,8 @@ impl Forecast {
     /// # Arguments
     ///
     /// * 'date_time' - the date to get a forecast for
-    pub fn new_forecast(&self, date_time: DateTime<Local>) -> Result<ForecastValues, ForecastError> {
-        let from = date_time.duration_trunc(TimeDelta::days(1)).unwrap();
+    pub fn new_forecast(&self, date_time: DateTime<Local>) -> Result<ForecastValues> {
+        let from = date_time.duration_trunc(TimeDelta::days(1))?;
         let to = from.with_hour(23).unwrap();
 
         let url = format!("http://{}:{}/forecast", self.host, self.port);
@@ -78,7 +80,7 @@ impl Forecast {
 
 
         if forecast.len() == 0 {
-            Err(ForecastError::Network(format!("No forecast found for {}", date_time.date_naive())))
+            Err(ForecastError(format!("No forecast found for {}", date_time.date_naive())).into())
         } else {
             Ok(ForecastValues{forecast})
         }

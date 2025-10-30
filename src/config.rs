@@ -1,7 +1,7 @@
 use std::fs;
 use log::LevelFilter;
 use serde::Deserialize;
-use crate::errors::ConfigError;
+use anyhow::Result;
 
 #[derive(Deserialize)]
 pub struct GeoRef {
@@ -112,7 +112,7 @@ struct HouseHoldConsumption {
 /// # Arguments
 /// 
 /// * 'config_path' - path to the configuration file
-pub fn load_config(config_path: &str) -> Result<Config, ConfigError> {
+pub fn load_config(config_path: &str) -> Result<Config> {
     
     let toml = fs::read_to_string(config_path)?;
     let mut config: Config = toml::from_str(&toml)?;
@@ -128,7 +128,7 @@ pub fn load_config(config_path: &str) -> Result<Config, ConfigError> {
 /// # Arguments
 ///
 /// * 'diagram_path' - path to the consumption diagram file
-fn load_consumption_diagram(diagram_path: &str) -> Result<[[f64;24];7], ConfigError> {
+fn load_consumption_diagram(diagram_path: &str) -> Result<[[f64;24];7]> {
     
     let toml = fs::read_to_string(diagram_path)?;
     let hhc: HouseHoldConsumption = toml::from_str(&toml)?;

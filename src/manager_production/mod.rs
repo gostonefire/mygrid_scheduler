@@ -1,15 +1,13 @@
 pub mod errors;
 
-use std::collections::HashMap;
 use std::ops::Add;
 use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike};
-use serde::Serialize;
+use anyhow::Result;
 use spa_sra::errors::SpaError;
 use spa_sra::spa::{Function, Input, SpaData};
 use crate::config::ProductionParameters;
+use crate::common::models::{ForecastValues, MinuteValues};
 use crate::manager_production::errors::ProdError;
-use crate::common::models::{ForecastValue, ForecastValues, PowerValue, PowerValues};
-use crate::spline::MonotonicCubicSpline;
 
 /// Struct for calculating PV production based on solar positions and cloud conditions
 ///
@@ -57,12 +55,12 @@ impl PVProduction {
     ///
     /// * 'forecast' - a vector of hourly weather forecasts
     /// * 'date_time' - the date to calculate for
-    pub fn estimate(&self, forecast: &ForecastValues, date_time: DateTime<Local>) -> Result<[f64;1440], ProdError> {
+    pub fn estimate(&self, forecast: &ForecastValues, date_time: DateTime<Local>) -> Result<MinuteValues> {
         let temp = forecast.minute_values(date_time, |f| f.temp)?;
         let cloud_factor = forecast.minute_values(date_time, |f| f.cloud_factor)?;
         let power_per_minute = self.day_power(date_time, temp, cloud_factor)?;
         
-        Ok(power_per_minute)
+        Ok(MinuteValues::new(power_per_minute, date_time))
     }
 
     /// Calculates one day estimated power per minute
@@ -71,9 +69,9 @@ impl PVProduction {
     ///
     /// * 'date_time' - date to calculate for
     /// * 'temp' - ambient temperature in degrees Celsius
-    fn day_power(&self, date_time: DateTime<Local>, temp: [f64;1440], cloud_factor: [f64;1440]) -> Result<[f64;1440], ProdError> {
+    fn day_power(&self, date_time: DateTime<Local>, temp: [f64;1440], cloud_factor: [f64;1440]) -> Result<[f64;1440]> {
         let mut power: [f64;1440] = [0.0;1440];
-        let sp = self.solar_positions(date_time)?;
+        let sp = self.solar_positions(date_time).map_err(|e|ProdError::SpaError(e.to_string()))?;
         let sun_intensity_factor = sun_intensity_factor(&sp.zenith);
         let (up, down) = self.full_sun_minute(&sp);
         let roof_temperature_east: [f64;1440] = self.roof_temperature(Some(up), &temp, &sp.incidence_east, &sun_intensity_factor)?;
@@ -230,7 +228,7 @@ impl PVProduction {
     /// * 'temp' - ambient temperature in degrees Celsius
     /// * 'inc_deg' - sun incidence on panels in degrees
     /// * 'sif' - sun intensity factor
-    fn roof_temperature(&self, up: Option<usize>, temp: &[f64], inc_deg: &[f64;1440], sif: &[f64;1440]) -> Result<[f64;1440], ProdError> {
+    fn roof_temperature(&self, up: Option<usize>, temp: &[f64], inc_deg: &[f64;1440], sif: &[f64;1440]) -> Result<[f64;1440]> {
 
         let t_roof = roof_thermodynamics(
             temp,
@@ -372,7 +370,7 @@ fn roof_thermodynamics(
     t0: Option<f64>,
     tau_down: Option<f64>,
     up: Option<usize>,
-) -> Result<Vec<f64>, ProdError> {
+) -> Result<Vec<f64>> {
     let n = t_air.len();
     if n == 0 {
         return Ok(Vec::new());
@@ -380,22 +378,22 @@ fn roof_thermodynamics(
 
     // Check arrays lengths and input values
     if inc_deg.len() != n || sif.len() != n {
-        return Err("inc_rad and sif must have the same length as t_air".into());
+        return Err(ProdError::ThermodynamicsError("inc_rad and sif must have the same length as t_air".into()))?;
     }
     if let Some(c) = clouds {
         if c.len() != n {
-            return Err("clouds must have the same length as t_air".into());
+            return Err(ProdError::ThermodynamicsError("clouds must have the same length as t_air".into()))?;
         }
     }
     if dt <= 0.0 {
-        return Err("dt must be > 0".into());
+        return Err(ProdError::ThermodynamicsError("dt must be > 0".into()))?;
     }
     if tau <= 0.0 {
-        return Err("tau must be > 0".into());
+        return Err(ProdError::ThermodynamicsError("tau must be > 0".into()))?;
     }
     if let Some(td) = tau_down {
         if td <= 0.0 {
-            return Err("tau_down must be > 0".into());
+            return Err(ProdError::ThermodynamicsError("tau_down must be > 0".into()))?;
         }
     }
 
@@ -439,59 +437,6 @@ fn roof_thermodynamics(
     }
 
     Ok(t_roof)
-}
-
-/// Transforms a day worth if forecast values to minute values
-///
-/// # Arguments
-///
-/// * 'forecast' - weather forecast assumed to be per hour
-/// * 'date_time' - date to transform
-/// * 'y_fn' - function that picks out whatever attribute to use from the forecast
-fn minute_values(forecast: &Vec<ForecastValue>, date_time: DateTime<Local>, y_fn: fn(&ForecastValue) -> f64) -> Result<[f64;1440], ProdError> {
-    let xy = forecast
-        .iter()
-        .filter(|f| f.valid_time.date_naive() == date_time.date_naive())
-        .map(|f| ((f.valid_time.hour() * 60 + f.valid_time.minute()) as f64, y_fn(f)))
-        .collect::<Vec<(f64, f64)>>();
-    let (x, y): (Vec<f64>, Vec<f64>) = xy.into_iter().unzip();
-    let s = MonotonicCubicSpline::new(&x, &y)?;
-    let mut temp = [0.0; 1440];
-    temp.iter_mut().enumerate().for_each(|(i, t)| {
-        *t = s.interpolate(i as f64);
-    });
-
-    Ok(temp)
-}
-
-/// Returns a grouped version of the data input
-/// Data is grouped per `group` minutes, and the group function is average
-///
-/// # Arguments
-///
-/// * 'data' - data to be grouped
-/// * 'date_time' - date to use as a basis for result struct
-/// * 'group' - minutes per group from input data
-fn group_on_time(data: [f64;1440], date_time: DateTime<Local>, group: u32) -> Vec<PowerValue> {
-    let mut map: HashMap<u32, (f64, f64)> = HashMap::new();
-
-    for (i, d) in data.iter().enumerate() {
-        let _ = map
-            .entry((i as u32 / group) * group)
-            .and_modify(|v|{v.0 += *d; v.1 += 1.0;})
-            .or_insert((*d, 1.0));
-    }
-
-    let mut result = map
-        .into_iter()
-        .map(|(t, v)| {
-            let dt = date_time.with_hour(t / 60u32).unwrap().with_minute(t % 60u32).unwrap();
-            PowerValue { valid_time: dt, power: v.0 / v.1 }
-        })
-        .collect::<Vec<PowerValue>>();
-    result.sort_by(|a, b| a.valid_time.cmp(&b.valid_time));
-
-    result
 }
 
 struct SolarPositions {
