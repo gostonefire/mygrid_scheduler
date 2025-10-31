@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::thread;
 use std::ops::Add;
-use chrono::{DateTime, Datelike, DurationRound, Local, NaiveTime, TimeDelta, Timelike};
+use chrono::{DateTime, Datelike, DurationRound, Local, NaiveTime, TimeDelta, Timelike, Utc};
 use rayon::ThreadPoolBuilder;
 use anyhow::Result;
 use log::{error, info};
@@ -27,7 +27,7 @@ mod macros;
 mod common;
 
 fn main() -> Result<()> {
-    ThreadPoolBuilder::new().num_threads(4).build_global()?;
+    ThreadPoolBuilder::new().num_threads(2).build_global()?;
     
     // Load config and set up all managers. If initialization fails, we are pretty much out of luck
     // and can't even log or send notification mail.
@@ -56,7 +56,7 @@ fn main() -> Result<()> {
 /// * 'mgr' - struct with configured managers
 /// * '
 fn run(mgr: &mut Mgr, path: &str) -> Result<()> {
-    let run_start = DateTime::parse_from_rfc3339("2025-10-31T17:30:00+01:00")?.with_timezone(&Local);
+    //let run_start = DateTime::parse_from_rfc3339("2025-10-31T17:30:00+01:00")?.with_timezone(&Local);
 
     // The run start is always assumed to be at call of this function, the schedule start, however,
     // is assumed to be some x minutes in the future since it takes quite a while to calculate.
@@ -64,7 +64,7 @@ fn run(mgr: &mut Mgr, path: &str) -> Result<()> {
     // * If the run starts before 21:00, we calculate a schedule for the rest of the current day.
     // * if the run starts at or after 23:15, we add one hour and cannibalize from the next day (1395 is the minute of the day for 23:15).
     // * Otherwise, we calculate a schedule for the entire next day
-    //let run_start = Local::now();
+    let run_start = Local::now();
     let schedule_start = if run_start.hour() < 21 || run_start.hour() * 60 + run_start.minute() >= 1395 {
         run_start.add(TimeDelta::hours(1)).duration_trunc(TimeDelta::minutes(15))?
     } else {
