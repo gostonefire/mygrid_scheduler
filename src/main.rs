@@ -6,6 +6,7 @@ use rayon::ThreadPoolBuilder;
 use anyhow::Result;
 use log::{error, info};
 use toml::value::Time;
+use crate::config::Config;
 use crate::errors::SchedulingError;
 use crate::initialization::{init, Mgr};
 use crate::scheduler::Block;
@@ -37,7 +38,7 @@ fn main() -> Result<()> {
         }   
     };
 
-    match run(&mut mgr) {
+    match run(&mut mgr, &config.files.schedule_dir) {
         Ok(_) => (),
         Err(e) => {
             error!("Run failed: {}", e);
@@ -53,8 +54,9 @@ fn main() -> Result<()> {
 /// # Arguments
 ///
 /// * 'mgr' - struct with configured managers
-fn run(mgr: &mut Mgr) -> Result<()> {
-    let run_start = DateTime::parse_from_rfc3339("2025-10-30T23:30:00+01:00")?.with_timezone(&Local);
+/// * '
+fn run(mgr: &mut Mgr, path: &str) -> Result<()> {
+    let run_start = DateTime::parse_from_rfc3339("2025-10-31T17:30:00+01:00")?.with_timezone(&Local);
 
     // The run start is always assumed to be at call of this function, the schedule start, however,
     // is assumed to be some x minutes in the future since it takes quite a while to calculate.
@@ -78,8 +80,11 @@ fn run(mgr: &mut Mgr) -> Result<()> {
 
     info!("Base Cost: {}, Schedule Cost: {}", mgr.schedule.base_cost, mgr.schedule.total_cost);
     for b in blocks.iter() {
-        println!("{:?}", b);
+        info!("{}", b);
     }
+
+    save_schedule(path, schedule_start, &blocks)?;
+
     Ok(())
 }
 
@@ -149,4 +154,23 @@ fn get_schedule(mgr: &mut Mgr, soc_in: u8, schedule_start: DateTime<Local>) -> R
     mgr.schedule.update_scheduling(&tariffs, &production.data, &consumption.data, soc_in, schedule_start);
 
     Ok(mgr.schedule.blocks.clone())
+}
+
+/// Saves a schedule to file for consumption
+///
+/// # Arguments
+///
+/// * 'path' - path to the schedule directory
+/// * 'schedule_start' - the time when the schedule starts
+/// * 'schedule' - the vector of block that represents the schedule
+fn save_schedule(path: &str, schedule_start: DateTime<Local>, schedule: &Vec<Block>) -> Result<()> {
+    let filename = format!("{}{}_schedule.json", path, schedule_start.format("%Y%m%d_%H%M"));
+
+    let json = serde_json::to_string_pretty(schedule)?;
+
+    std::fs::write(&filename, json)?;
+
+    info!("Schedule saved to {}", filename);
+
+    Ok(())
 }

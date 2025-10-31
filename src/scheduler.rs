@@ -80,9 +80,10 @@ pub struct Block {
 impl fmt::Display for Block {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         // Build base output
-        let output = format!("{} - {} -> {:>2} - {:>2}: SocIn {:>3}, SocOut {:>3}, chargeIn {:>5.2}, chargeOut {:>5.2}, cost {:>5.2} ",
-                             self.status, self.block_type,
-                             self.start_hour, self.end_hour,
+        let output = format!("{} -> {:>02}:{:>02} - {:>02}:{:>02}: SocIn {:>3}, SocOut {:>3}, chargeIn {:>5.2}, chargeOut {:>5.2}, cost {:>5.2} ",
+                             self.block_type,
+                             self.start_hour, self.start_minute,
+                             self.end_hour, self.end_minute,
                              self.soc_in, self.soc_out,
                              self.charge_in, self.charge_out,
                              self.cost);
