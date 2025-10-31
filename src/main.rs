@@ -1,12 +1,9 @@
-use std::collections::HashSet;
 use std::thread;
 use std::ops::Add;
-use chrono::{DateTime, Datelike, DurationRound, Local, NaiveTime, TimeDelta, Timelike, Utc};
+use chrono::{DateTime, Datelike, DurationRound, Local, TimeDelta, Timelike};
 use rayon::ThreadPoolBuilder;
 use anyhow::Result;
 use log::{error, info};
-use toml::value::Time;
-use crate::config::Config;
 use crate::errors::SchedulingError;
 use crate::initialization::{init, Mgr};
 use crate::scheduler::Block;
@@ -38,10 +35,14 @@ fn main() -> Result<()> {
         }   
     };
 
+    // Create a new schedule
     match run(&mut mgr, &config.files.schedule_dir) {
-        Ok(_) => (),
+        Ok(_) => {
+            mgr.mail.send_mail("Report".into(), "Successfully created new schedule".into())?;
+        },
         Err(e) => {
             error!("Run failed: {}", e);
+            mgr.mail.send_mail("Error in scheduler".into(), format!("Run failed: {}", e))?;
             return Err(e)?;
         }
     }

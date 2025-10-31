@@ -2,7 +2,7 @@ pub mod errors;
 mod models;
 
 use std::time::Duration;
-use chrono::{DateTime, DurationRound, Local, TimeDelta};
+use chrono::{DateTime, Local};
 use ureq::Agent;
 use anyhow::Result;
 use crate::manager_nordpool::errors::NordPoolError;

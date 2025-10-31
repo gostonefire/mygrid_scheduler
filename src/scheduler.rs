@@ -163,59 +163,6 @@ impl Schedule {
         }
     }
 
-    /// Returns a block id of a block identified by hour
-    ///
-    /// # Arguments
-    ///
-    /// * 'date_time' - the time to get a block for
-    pub fn get_block_by_time(&self, date_time: DateTime<Local>) -> Option<usize> {
-        let date_hour = date_time.duration_trunc(TimeDelta::hours(1)).unwrap();
-        for b in self.blocks.iter() {
-            if b.start_time <= date_hour && b.end_time >= date_hour {
-                return Some(b.block_id);
-            }
-        }
-
-        None
-    }
-
-    /// Returns a mutable block identified by its block id
-    ///
-    /// # Arguments
-    ///
-    /// * 'block_ld' - id of the block
-    pub fn get_block_by_id(&mut self, block_id: usize) -> Option<&mut Block> {
-        self.blocks.iter_mut().find(|b| b.block_id == block_id)
-    }
-
-    /// Check if it is time to update to next step in schedule
-    ///
-    /// # Arguments
-    ///
-    /// * 'block_id' - id of the block to check
-    /// * 'date_time' - the date time the block is valid for
-    pub fn is_update_time(&self, block_id: usize, date_time: DateTime<Local>) -> bool {
-        let date_hour = date_time.duration_trunc(TimeDelta::hours(1)).unwrap();
-        let block = self.blocks.iter().find(|b| b.block_id == block_id);
-
-        block.is_none_or(|b| (b.start_time > date_hour || b.end_time < date_hour) ||
-            (b.start_time <= date_hour && b.end_time >= date_hour && b.status == Status::Waiting))
-    }
-
-    /// Check if we are in an active charge block and charging is still ongoing
-    ///
-    /// # Arguments
-    ///
-    /// * 'block_id' - id of the block to check
-    /// * 'date_time' - the date time the block is valid for
-    pub fn is_active_charging(&self, block_id: usize, date_time: DateTime<Local>) -> bool {
-        let date_hour = date_time.duration_trunc(TimeDelta::hours(1)).unwrap();
-        let block = self.blocks.iter().find(|b| b.block_id == block_id);
-
-        block.is_some_and(|b| b.start_time <= date_hour && b.end_time >= date_hour
-            && b.block_type == BlockType::Charge && b.status == Status::Started)
-    }
-    
     /// Returns configured kwh per SoC unit
     /// 
     pub fn get_soc_kwh(&self) -> f64 {
