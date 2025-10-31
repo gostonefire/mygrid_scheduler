@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use chrono::{DateTime, Local, Timelike};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use anyhow::Result;
 use crate::errors::{TimeValuesError};
 use crate::spline::MonotonicCubicSpline;
@@ -89,20 +89,6 @@ impl MinuteValues {
         TimeValues {data, date_time: self.date_time, _marker: PhantomData }
     }
 
-    /// Returns a TimeValues struct
-    ///
-    pub fn time_values(&self) -> TimeValues {
-        let data: Vec<TimeValue> = self.data.iter().enumerate().map(|(i, d)| {
-            let dt = self.date_time.with_hour(i as u32 / 60u32).unwrap().with_minute(i as u32 % 60u32).unwrap();
-            TimeValue {
-                valid_time: dt,
-                data: *d,
-            }
-        }).collect();
-
-        TimeValues {data, date_time: self.date_time, _marker: PhantomData }
-    }
-
     /// Groups minute values into a vector of time and values
     ///
     /// # Arguments
@@ -147,24 +133,6 @@ impl TimeValues {
         self.data.push(data);
 
         Ok(())
-    }
-
-    /// Creates a new TimeValues struct from minute values
-    ///
-    /// # Arguments
-    ///
-    /// * 'data' - minute values over one full day
-    /// * 'date_time' - date to use as a basis for result struct
-    pub fn from_minute_values(data: [f64;1440], date_time: DateTime<Local>) -> TimeValues {
-        let data: Vec<TimeValue> = data.iter().enumerate().map(|(i, d)| {
-            let dt = date_time.with_hour(i as u32 / 60u32).unwrap().with_minute(i as u32 % 60u32).unwrap();
-            TimeValue {
-                valid_time: dt,
-                data: *d,
-            }
-        }).collect();
-
-        TimeValues {data, date_time, _marker: PhantomData }
     }
 
     /// Transforms a day worth of power data from hourly to per minute
