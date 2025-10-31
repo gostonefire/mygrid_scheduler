@@ -6,15 +6,16 @@ use anyhow::Result;
 use crate::errors::{TimeValuesError};
 use crate::spline::MonotonicCubicSpline;
 
-#[derive(Debug)]
-pub struct BackupData {
+#[derive(Serialize, Debug)]
+pub struct BaseData {
     pub date_time: DateTime<Local>,
+    pub forecast: Vec<ForecastValue>,
     pub production: Vec<TimeValue>,
     pub consumption: Vec<TimeValue>,
     pub tariffs: Vec<TariffValue>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct TariffValue {
     pub valid_time: DateTime<Local>,
     pub price: f64,

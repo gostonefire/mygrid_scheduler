@@ -68,6 +68,7 @@ pub struct MailParameters {
 #[derive(Deserialize)]
 pub struct Files {
     pub schedule_dir: String,
+    pub base_data_dir: String,
     pub cons_diagram: String,
 }
 

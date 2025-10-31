@@ -4,6 +4,8 @@ use chrono::{DateTime, Datelike, DurationRound, Local, TimeDelta, Timelike};
 use rayon::ThreadPoolBuilder;
 use anyhow::Result;
 use log::{error, info};
+use crate::common::models::BaseData;
+use crate::config::Files;
 use crate::errors::SchedulingError;
 use crate::initialization::{init, Mgr};
 use crate::scheduler::Block;
@@ -36,7 +38,7 @@ fn main() -> Result<()> {
     };
 
     // Create a new schedule
-    match run(&mut mgr, &config.files.schedule_dir) {
+    match run(&mut mgr, &config.files) {
         Ok(_) => {
             mgr.mail.send_mail("Report".into(), "Successfully created new schedule".into())?;
         },
@@ -55,9 +57,9 @@ fn main() -> Result<()> {
 /// # Arguments
 ///
 /// * 'mgr' - struct with configured managers
-/// * '
-fn run(mgr: &mut Mgr, path: &str) -> Result<()> {
-    //let run_start = DateTime::parse_from_rfc3339("2025-10-31T17:30:00+01:00")?.with_timezone(&Local);
+/// * 'files' - files config
+fn run(mgr: &mut Mgr, files: &Files) -> Result<()> {
+    let run_start = DateTime::parse_from_rfc3339("2025-10-31T17:30:00+01:00")?.with_timezone(&Local);
 
     // The run start is always assumed to be at call of this function, the schedule start, however,
     // is assumed to be some x minutes in the future since it takes quite a while to calculate.
@@ -65,7 +67,7 @@ fn run(mgr: &mut Mgr, path: &str) -> Result<()> {
     // * If the run starts before 21:00, we calculate a schedule for the rest of the current day.
     // * if the run starts at or after 23:15, we add one hour and cannibalize from the next day (1395 is the minute of the day for 23:15).
     // * Otherwise, we calculate a schedule for the entire next day
-    let run_start = Local::now();
+    //let run_start = Local::now();
     let schedule_start = if run_start.hour() < 21 || run_start.hour() * 60 + run_start.minute() >= 1395 {
         run_start.add(TimeDelta::hours(1)).duration_trunc(TimeDelta::minutes(15))?
     } else {
@@ -77,15 +79,16 @@ fn run(mgr: &mut Mgr, path: &str) -> Result<()> {
     let start_soc = estimate_soc_in(mgr, run_start, schedule_start)?;
 
     // Calculate the new schedule
-    let blocks = get_schedule(mgr, start_soc, schedule_start)?;
+    let (blocks, base_data) = get_schedule(mgr, start_soc, schedule_start)?;
 
     info!("Base Cost: {}, Schedule Cost: {}", mgr.schedule.base_cost, mgr.schedule.total_cost);
     for b in blocks.iter() {
         info!("{}", b);
     }
 
-    save_schedule(path, schedule_start, &blocks)?;
-
+    save_schedule(&files.schedule_dir, schedule_start, &blocks)?;
+    save_base_data(&files.base_data_dir, &base_data)?;
+    
     Ok(())
 }
 
@@ -144,17 +147,23 @@ fn estimate_soc_in(mgr: &mut Mgr, run_start: DateTime<Local>, schedule_start: Da
 /// * 'mgr' - struct with managers
 /// * 'run_start' - time when calculation starts
 /// * 'schedule_start' - time when the new schedule is expected to start
-fn get_schedule(mgr: &mut Mgr, soc_in: u8, schedule_start: DateTime<Local>) -> Result<Vec<Block>> {
+fn get_schedule(mgr: &mut Mgr, soc_in: u8, schedule_start: DateTime<Local>) -> Result<(Vec<Block>, BaseData)> {
     let forecast = retry!(||mgr.forecast.new_forecast(schedule_start))?;
-
     let production = mgr.pv.estimate(&forecast, schedule_start)?.time_groups(15);
     let consumption = mgr.cons.estimate(&forecast, schedule_start)?.minute_values()?.time_groups(15);
-
     let tariffs = retry!(||mgr.nordpool.get_tariffs(schedule_start))?;
 
     mgr.schedule.update_scheduling(&tariffs, &production.data, &consumption.data, soc_in, schedule_start);
 
-    Ok(mgr.schedule.blocks.clone())
+    let base_data = BaseData {
+        date_time: schedule_start,
+        production: mgr.pv.estimate(&forecast, schedule_start)?.time_groups(5).data,
+        forecast: forecast.forecast,
+        consumption: consumption.data,
+        tariffs,
+    };
+
+    Ok((mgr.schedule.blocks.clone(), base_data))
 }
 
 /// Saves a schedule to file for consumption
@@ -172,6 +181,24 @@ fn save_schedule(path: &str, schedule_start: DateTime<Local>, schedule: &Vec<Blo
     std::fs::write(&filename, json)?;
 
     info!("Schedule saved to {}", filename);
+
+    Ok(())
+}
+
+/// Saves base data for use in e.g. MyGridDash
+/// 
+/// # Arguments
+/// 
+/// * 'path' - path to the base data dir
+/// * 'base_data' - base data to save
+fn save_base_data(path: &str, base_data: &BaseData) -> Result<()> {
+    let filename = format!("{}{}_base_data.json", path, base_data.date_time.format("%Y%m%d_%H%M"));
+
+    let json = serde_json::to_string_pretty(base_data)?;
+
+    std::fs::write(&filename, json)?;
+
+    info!("Backup data saved to {}", filename);
 
     Ok(())
 }
