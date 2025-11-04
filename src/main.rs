@@ -79,14 +79,14 @@ fn run(mgr: &mut Mgr, files: &Files) -> Result<()> {
     let start_soc = estimate_soc_in(mgr, run_start, schedule_start)?;
 
     // Calculate the new schedule
-    let (blocks, base_data) = get_schedule(mgr, start_soc, schedule_start)?;
+    let base_data = get_schedule(mgr, start_soc, schedule_start)?;
 
     info!("Base Cost: {}, Schedule Cost: {}", mgr.schedule.base_cost, mgr.schedule.total_cost);
-    for b in blocks.iter() {
+    for b in mgr.schedule.blocks.iter() {
         info!("{}", b);
     }
 
-    save_schedule(&files.schedule_dir, schedule_start, &blocks)?;
+    save_schedule(&files.schedule_dir, mgr.schedule.start_time, mgr.schedule.end_time, &mgr.schedule.blocks)?;
     save_base_data(&files.base_data_dir, &base_data)?;
 
     Ok(())
@@ -147,7 +147,7 @@ fn estimate_soc_in(mgr: &mut Mgr, run_start: DateTime<Local>, schedule_start: Da
 /// * 'mgr' - struct with managers
 /// * 'run_start' - time when calculation starts
 /// * 'schedule_start' - time when the new schedule is expected to start
-fn get_schedule(mgr: &mut Mgr, soc_in: u8, schedule_start: DateTime<Local>) -> Result<(Vec<Block>, BaseData)> {
+fn get_schedule(mgr: &mut Mgr, soc_in: u8, schedule_start: DateTime<Local>) -> Result<BaseData> {
     let forecast = retry!(||mgr.forecast.new_forecast(schedule_start))?;
     let production = mgr.pv.estimate(&forecast, schedule_start)?.time_groups(15);
     let consumption = mgr.cons.estimate(&forecast, schedule_start)?.minute_values()?.time_groups(15);
@@ -163,7 +163,7 @@ fn get_schedule(mgr: &mut Mgr, soc_in: u8, schedule_start: DateTime<Local>) -> R
         tariffs,
     };
 
-    Ok((mgr.schedule.blocks.clone(), base_data))
+    Ok(base_data)
 }
 
 /// Saves a schedule to file for consumption
@@ -172,9 +172,10 @@ fn get_schedule(mgr: &mut Mgr, soc_in: u8, schedule_start: DateTime<Local>) -> R
 ///
 /// * 'path' - path to the schedule directory
 /// * 'schedule_start' - the time when the schedule starts
+/// * 'schedule_end' - the time when the schedule ends (non-inclusive)
 /// * 'schedule' - the vector of block that represents the schedule
-fn save_schedule(path: &str, schedule_start: DateTime<Local>, schedule: &Vec<Block>) -> Result<()> {
-    let filename = format!("{}{}_schedule.json", path, schedule_start.format("%Y%m%d_%H%M"));
+fn save_schedule(path: &str, schedule_start: DateTime<Local>, schedule_end: DateTime<Local>, schedule: &Vec<Block>) -> Result<()> {
+    let filename = format!("{}{}_{}_schedule.json", path, schedule_start.format("%Y%m%d%H%M"), schedule_end.format("%Y%m%d%H%M"));
 
     let json = serde_json::to_string_pretty(schedule)?;
 

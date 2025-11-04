@@ -122,7 +122,8 @@ struct PeriodMetrics {
 
 /// Struct representing the block schedule from the current hour and forward
 pub struct Schedule {
-    pub date_time: DateTime<Local>,
+    pub start_time: DateTime<Local>,
+    pub end_time: DateTime<Local>,
     pub blocks: Vec<Block>,
     pub tariffs: Tariffs,
     pub total_cost: f64,
@@ -145,7 +146,8 @@ impl Schedule {
     /// * 'schedule_blocks' - any existing schedule blocks
     pub fn new(config: &ChargeParameters, schedule_blocks: Option<Vec<Block>>) -> Schedule {
         Schedule {
-            date_time: Default::default(),
+            start_time: Default::default(),
+            end_time: Default::default(),
             blocks: schedule_blocks.unwrap_or(Vec::new()),
             tariffs: Tariffs {
                 buy: [0.0; TIME_BLOCKS],
@@ -204,11 +206,14 @@ impl Schedule {
 
         let charge_in = (soc_in.max(10) - 10) as f64 * self.soc_kwh;
 
-        self.date_time = date_time;
         self.tariffs = self.transform_tariffs(&tariffs_in_scope);
         let block_collection = self.parallel_search(charge_in);
         self.blocks = create_result_blocks(block_collection.blocks, self.soc_kwh, start_time);
         self.total_cost = block_collection.total_cost;
+        self.start_time = start_time;
+        self.end_time = self.blocks.last()
+            .expect("should exist at least the base block")
+            .end_time.add(TimeDelta::minutes(15));
     }
 
     fn parallel_search(&mut self, charge_in: f64) -> BlockCollection {
