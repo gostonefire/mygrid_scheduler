@@ -1,8 +1,9 @@
-use std::thread;
+use std::{fs, thread};
 use std::ops::Add;
-use chrono::{DateTime, Datelike, DurationRound, Local, TimeDelta, Timelike};
+use chrono::{DateTime, Datelike, Duration, DurationRound, Local, NaiveDateTime, TimeDelta, Timelike};
 use rayon::ThreadPoolBuilder;
 use anyhow::Result;
+use glob::glob;
 use log::{error, info};
 use crate::common::models::BaseData;
 use crate::config::Files;
@@ -179,7 +180,9 @@ fn save_schedule(path: &str, schedule_start: DateTime<Local>, schedule_end: Date
 
     let json = serde_json::to_string_pretty(schedule)?;
 
-    std::fs::write(&filename, json)?;
+    fs::write(&filename, json)?;
+
+    clean_up_files(&format!("{}*_schedule.json", path))?;
 
     info!("Schedule saved to {}", filename);
 
@@ -193,13 +196,37 @@ fn save_schedule(path: &str, schedule_start: DateTime<Local>, schedule_end: Date
 /// * 'path' - path to the base data dir
 /// * 'base_data' - base data to save
 fn save_base_data(path: &str, base_data: &BaseData) -> Result<()> {
-    let filename = format!("{}{}_base_data.json", path, base_data.date_time.format("%Y%m%d_%H%M"));
+    let filename = format!("{}{}_base_data.json", path, base_data.date_time.format("%Y%m%d%H%M"));
 
     let json = serde_json::to_string_pretty(base_data)?;
 
-    std::fs::write(&filename, json)?;
+    fs::write(&filename, json)?;
+
+    clean_up_files(&format!("{}*_base_data.json", path))?;
 
     info!("Backup data saved to {}", filename);
+
+    Ok(())
+}
+
+/// Removes any files following the pattern that are older than 48 hours
+///
+/// # Arguments
+///
+/// * 'pattern' - file pattern
+fn clean_up_files(pattern: &str) -> Result<()> {
+    for entry in glob(&pattern)? {
+        if let Ok(path) = entry {
+            if let Some(os_name) = path.file_name() {
+                if let Some(filename) = os_name.to_str() {
+                    let datetime: DateTime<Local> = NaiveDateTime::parse_from_str(&filename[0..12], "%Y%m%d%H%M")?.and_local_timezone(Local).unwrap();
+                    if Local::now() - datetime > Duration::hours(48) {
+                        fs::remove_file(path)?;
+                    }
+                }
+            }
+        }
+    }
 
     Ok(())
 }
