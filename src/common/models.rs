@@ -9,6 +9,8 @@ use crate::spline::MonotonicCubicSpline;
 #[derive(Serialize, Debug)]
 pub struct BaseData {
     pub date_time: DateTime<Local>,
+    pub base_cost: f64,
+    pub schedule_cost: f64,
     pub forecast: Vec<ForecastValue>,
     pub production: Vec<TimeValue>,
     pub consumption: Vec<TimeValue>,

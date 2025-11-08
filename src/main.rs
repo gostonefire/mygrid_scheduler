@@ -158,6 +158,8 @@ fn get_schedule(mgr: &mut Mgr, soc_in: u8, schedule_start: DateTime<Local>) -> R
 
     let base_data = BaseData {
         date_time: schedule_start,
+        base_cost: mgr.schedule.base_cost,
+        schedule_cost: mgr.schedule.total_cost,
         production: mgr.pv.estimate(&forecast, schedule_start)?.time_groups(5).data,
         consumption: mgr.cons.estimate(&forecast, schedule_start)?.minute_values()?.time_groups(5).data,
         forecast: forecast.forecast,
