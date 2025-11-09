@@ -100,10 +100,12 @@ impl NordPool {
             return Err(NordPoolError::Document("number of day tariffs not equal to 96".into()))?
         }
 
+        let day_avg = tariffs.multi_area_entries.iter().map(|t| t.entry_per_area.se4).sum::<f64>() / 96.0 / 1000.0;
+
         let mut result: Vec<TariffValue> = Vec::new();
         tariffs.multi_area_entries.iter().for_each(
             |t| {
-                result.push(self.add_vat_markup(t.entry_per_area.se4, t.delivery_start));
+                result.push(self.add_vat_markup(day_avg, t.entry_per_area.se4, t.delivery_start));
             });
 
         Ok(result)
@@ -113,11 +115,12 @@ impl NordPool {
     ///
     /// # Arguments
     ///
+    /// * 'day_avg' - average tariff for the day as from NordPool in SEK/MWh
     /// * 'tariff' - spot fee as from NordPool in SEK/MWh
     /// * 'delivery_start' - start time for the spot
-    fn add_vat_markup(&self, tariff: f64, delivery_start: DateTime<Local>) -> TariffValue {
+    fn add_vat_markup(&self, day_avg: f64, tariff: f64, delivery_start: DateTime<Local>) -> TariffValue {
         let price = tariff / 1000.0; // SEK per MWh to per kWh
-        let grid_fees = (self.variable_fee + self.energy_tax) / 100.0 + self.spot_fee_percentage * price;
+        let grid_fees = (self.variable_fee + self.energy_tax) / 100.0 + self.spot_fee_percentage * day_avg;
         let trade_fees = (self.swedish_power_grid + self.balance_responsibility + self.electric_certificate +
             self.guarantees_of_origin + self.fixed) / 100.0 + price;
 
