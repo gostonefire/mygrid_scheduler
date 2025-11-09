@@ -48,7 +48,7 @@ pub fn init() -> Result<(Config, Mgr)> {
     
     // Instantiate structs
     let fox = Fox::new(&config.fox_ess);
-    let nordpool = NordPool::new();
+    let nordpool = NordPool::new(&config.tariff_fees);
     let smhi = Forecast::new(&config);
     let pv = PVProduction::new(&config.production, config.geo_ref.lat, config.geo_ref.long);
     let cons = Consumption::new(&config.consumption);

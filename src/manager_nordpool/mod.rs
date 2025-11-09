@@ -7,21 +7,42 @@ use ureq::Agent;
 use anyhow::Result;
 use crate::manager_nordpool::errors::NordPoolError;
 use crate::common::models::{TariffValue};
+use crate::config::TariffFees;
 use crate::manager_nordpool::models::Tariffs;
 
 pub struct NordPool {
     agent: Agent,
+    variable_fee: f64,
+    spot_fee_percentage: f64,
+    energy_tax: f64,
+    swedish_power_grid: f64,
+    balance_responsibility: f64,
+    electric_certificate: f64,
+    guarantees_of_origin: f64,
+    fixed: f64,
+    production_price: f64,
 }
 
 impl NordPool {
-    pub fn new() -> NordPool {
-        let config = Agent::config_builder()
+    pub fn new(config: &TariffFees) -> NordPool {
+        let agent_config = Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(30)))
             .build();
 
-        let agent = config.into();
+        let agent = agent_config.into();
 
-        Self { agent }
+        Self {
+            agent,
+            variable_fee: config.variable_fee,
+            spot_fee_percentage: config.spot_fee_percentage / 100.0,
+            energy_tax: config.energy_tax,
+            swedish_power_grid: config.swedish_power_grid,
+            balance_responsibility: config.balance_responsibility,
+            electric_certificate: config.electric_certificate,
+            guarantees_of_origin: config.guarantees_of_origin,
+            fixed: config.fixed,
+            production_price: config.production_price,
+        }
     }
 
     /// Retrieves day ahead prices from NordPool
@@ -66,7 +87,7 @@ impl NordPool {
             .read_to_string()?;
 
         let tariffs: Tariffs = serde_json::from_str(&json)?;
-        NordPool::tariffs_to_vec(&tariffs)
+        self.tariffs_to_vec(&tariffs)
     }
 
     /// Transforms the Tariffs struct to a plain vector of prices
@@ -74,7 +95,7 @@ impl NordPool {
     /// # Arguments
     ///
     /// * 'tariffs' - the struct containing prices
-    fn tariffs_to_vec(tariffs: &Tariffs) -> Result<Vec<TariffValue>> {
+    fn tariffs_to_vec(&self, tariffs: &Tariffs) -> Result<Vec<TariffValue>> {
         if tariffs.multi_area_entries.len() != 96 {
             return Err(NordPoolError::Document("number of day tariffs not equal to 96".into()))?
         }
@@ -82,47 +103,36 @@ impl NordPool {
         let mut result: Vec<TariffValue> = Vec::new();
         tariffs.multi_area_entries.iter().for_each(
             |t| {
-                result.push(add_vat_markup(t.entry_per_area.se4, t.delivery_start));
+                result.push(self.add_vat_markup(t.entry_per_area.se4, t.delivery_start));
             });
 
         Ok(result)
     }
-}
 
-/// Adds VAT and other markups such as energy taxes etc.
-///
-/// The function spits out one buy price and one sell price
-/// Buy:
-/// * - Net fee: 31.625 öre (inc VAT)
-/// * - Spot fee: 7.7% (excl VAT)
-/// * - Energy taxes: 54.875 öre (inc VAT)
-/// * - Spot price (excl VAT)
-/// * - Variable fees: 7.696 öre (excl VAT)
-/// * - Extra: 2.4 öre (excl VAT)
-///
-/// Sell:
-/// * - Spot price (no VAT)
-/// * - Extra: 7.5 öre (no VAT)
-/// 
-/// Sell, but not included in calculation to only focus on day-by-day
-/// * - Tax reduction: 60 öre (no VAT), is returned yearly together with tax regulation
-///
-/// # Arguments
-///
-/// * 'tariff' - spot fee as from NordPool in SEK/MWh
-/// * 'delivery_start' - start time for the spot
-fn add_vat_markup(tariff: f64, delivery_start: DateTime<Local>) -> TariffValue {
-    let price = tariff / 1000.0; // SEK per MWh to per kWh
-    let buy = 0.31625 + (0.077 * price) / 0.8 + 0.54875 + (price + 0.024 + 0.07696) / 0.8;
-    let sell = 0.075 + price;
+    /// Adds VAT and other markups such as energy taxes etc.
+    ///
+    /// # Arguments
+    ///
+    /// * 'tariff' - spot fee as from NordPool in SEK/MWh
+    /// * 'delivery_start' - start time for the spot
+    fn add_vat_markup(&self, tariff: f64, delivery_start: DateTime<Local>) -> TariffValue {
+        let price = tariff / 1000.0; // SEK per MWh to per kWh
+        let grid_fees = (self.variable_fee + self.energy_tax) / 100.0 + self.spot_fee_percentage * price;
+        let trade_fees = (self.swedish_power_grid + self.balance_responsibility + self.electric_certificate +
+            self.guarantees_of_origin + self.fixed) / 100.0 + price;
 
-    TariffValue {
-        valid_time: delivery_start,
-        price: round_to_two_decimals(price),
-        buy: round_to_two_decimals(buy),
-        sell: round_to_two_decimals(sell),
+        let buy = (grid_fees + trade_fees) / 0.8;
+        let sell = self.production_price / 100.0 + price;
+
+        TariffValue {
+            valid_time: delivery_start,
+            price: round_to_two_decimals(price),
+            buy: round_to_two_decimals(buy),
+            sell: round_to_two_decimals(sell),
+        }
     }
 }
+
 
 /// Rounds values to two decimals
 ///

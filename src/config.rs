@@ -45,6 +45,19 @@ pub struct ChargeParameters {
 }
 
 #[derive(Deserialize)]
+pub struct TariffFees {
+    pub variable_fee: f64,
+    pub spot_fee_percentage: f64,
+    pub energy_tax: f64,
+    pub swedish_power_grid: f64,
+    pub balance_responsibility: f64,
+    pub electric_certificate: f64,
+    pub guarantees_of_origin: f64,
+    pub fixed: f64,
+    pub production_price: f64,
+}
+
+#[derive(Deserialize)]
 pub struct FoxESS {
     pub api_key: String,
     pub inverter_sn: String,
@@ -85,6 +98,7 @@ pub struct Config {
     pub consumption: ConsumptionParameters,
     pub production: ProductionParameters,
     pub charge: ChargeParameters,
+    pub tariff_fees: TariffFees,
     pub fox_ess: FoxESS,
     pub forecast: Forecast,   
     pub mail: MailParameters,
