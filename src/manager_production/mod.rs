@@ -71,7 +71,7 @@ impl PVProduction {
     /// * 'temp' - ambient temperature in degrees Celsius
     fn day_power(&self, date_time: DateTime<Local>, temp: [f64;1440], cloud_factor: [f64;1440]) -> Result<[f64;1440]> {
         let mut power: [f64;1440] = [0.0;1440];
-        let sp = self.solar_positions(date_time).map_err(|e|ProdError::SpaError(e.to_string()))?;
+        let sp = self.solar_positions(date_time)?;
         let sun_intensity_factor = sun_intensity_factor(&sp.zenith);
         let (up, down) = self.full_sun_minute(&sp);
         let roof_temperature_east: [f64;1440] = self.roof_temperature(Some(up), &temp, &sp.incidence_east, &sun_intensity_factor)?;
