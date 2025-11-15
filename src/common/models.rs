@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use chrono::{DateTime, Local, Timelike};
+use chrono::{DateTime, Local, Timelike, Utc};
 use serde::Serialize;
 use anyhow::Result;
-use crate::errors::{TimeValuesError};
+use crate::errors::{ForecastValuesError, TimeValuesError};
 use crate::spline::MonotonicCubicSpline;
 
 #[derive(Serialize, Debug)]
@@ -44,7 +44,7 @@ pub struct MinuteValues {
 
 #[derive(Serialize, Debug)]
 pub struct ForecastValue {
-    pub valid_time: DateTime<Local>,
+    pub valid_time: DateTime<Utc>,
     pub temp: f64,
     pub lcc_mean: f64,
     pub mcc_mean: f64,
@@ -159,17 +159,17 @@ impl TimeValues {
 }
 
 impl ForecastValues {
-    /// Transforms a day worth if forecast values to minute values
+    /// Transforms a day worth if forecast values to minute values starting from the first forecast value
     ///
     /// # Arguments
     ///
-    /// * 'date_time' - date to transform
-    /// * 'y_fn' - function that picks out whatever attribute to use from the forecast
-    pub fn minute_values(&self, date_time: DateTime<Local>, y_fn: fn(&ForecastValue) -> f64) -> Result<[f64;1440]> {
+    /// * 'y_fn' - a function that picks out whatever attribute to use from the forecast
+    pub fn minute_values(&self, y_fn: fn(&ForecastValue) -> f64) -> Result<[f64;1440]> {
+        let base_minute = self.forecast.first().ok_or(ForecastValuesError::EmptyForecastValues)?.valid_time.timestamp() / 60;
+        
         let xy = self.forecast
             .iter()
-            .filter(|f| f.valid_time.date_naive() == date_time.date_naive())
-            .map(|f| ((f.valid_time.hour() * 60 + f.valid_time.minute()) as f64, y_fn(f)))
+            .map(|f| ((f.valid_time.timestamp() / 60 - base_minute) as f64, y_fn(f)))
             .collect::<Vec<(f64, f64)>>();
         let (x, y): (Vec<f64>, Vec<f64>) = xy.into_iter().unzip();
         let s = MonotonicCubicSpline::new(&x, &y)?;

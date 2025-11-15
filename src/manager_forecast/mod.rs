@@ -2,7 +2,7 @@ pub mod errors;
 mod models;
 
 use std::time::Duration;
-use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike};
+use chrono::{DateTime, DurationRound, TimeDelta, Utc};
 use ureq::Agent;
 use anyhow::Result;
 use crate::config::Config;
@@ -46,10 +46,11 @@ impl Forecast {
     ///
     /// # Arguments
     ///
-    /// * 'date_time' - the date to get a forecast for
-    pub fn new_forecast(&self, date_time: DateTime<Local>) -> Result<ForecastValues> {
-        let from = date_time.duration_trunc(TimeDelta::days(1))?;
-        let to = from.with_hour(23).unwrap();
+    /// * 'from' - the datetime to get forecast from
+    /// * 'to' - the datetime to get forecast to (inclusive)
+    pub fn new_forecast(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<ForecastValues> {
+        let from = from.duration_trunc(TimeDelta::hours(1))?;
+        let to = to.duration_trunc(TimeDelta::hours(1))?;
 
         let url = format!("http://{}:{}/forecast", self.host, self.port);
 
@@ -80,7 +81,7 @@ impl Forecast {
 
 
         if forecast.len() == 0 {
-            Err(ForecastError(format!("No forecast found for {}", date_time.date_naive())).into())
+            Err(ForecastError(format!("No forecast found for {} - {}", from, to)).into())
         } else {
             Ok(ForecastValues{forecast})
         }

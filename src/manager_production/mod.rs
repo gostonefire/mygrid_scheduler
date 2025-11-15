@@ -1,12 +1,12 @@
 pub mod errors;
 
 use std::ops::Add;
-use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike};
+use chrono::{DateTime, DurationRound, TimeDelta, Timelike, Utc};
 use anyhow::Result;
 use spa_sra::errors::SpaError;
 use spa_sra::spa::{Function, Input, SpaData};
 use crate::config::ProductionParameters;
-use crate::common::models::{ForecastValues, MinuteValues};
+use crate::common::models::ForecastValues;
 use crate::manager_production::errors::ProdError;
 
 /// Struct for calculating PV production based on solar positions and cloud conditions
@@ -54,24 +54,24 @@ impl PVProduction {
     /// # Arguments
     ///
     /// * 'forecast' - a vector of hourly weather forecasts
-    /// * 'date_time' - the date to calculate for
-    pub fn estimate(&self, forecast: &ForecastValues, date_time: DateTime<Local>) -> Result<MinuteValues> {
-        let temp = forecast.minute_values(date_time, |f| f.temp)?;
-        let cloud_factor = forecast.minute_values(date_time, |f| f.cloud_factor)?;
-        let power_per_minute = self.day_power(date_time, temp, cloud_factor)?;
+    /// * 'day_date' - the date to calculate for
+    pub fn estimate(&self, forecast: &ForecastValues, day_date: DateTime<Utc>) -> Result<[f64;1440]> {
+        let temp = forecast.minute_values(|f| f.temp)?;
+        let cloud_factor = forecast.minute_values(|f| f.cloud_factor)?;
+        let power_per_minute = self.day_power(day_date, temp, cloud_factor)?;
         
-        Ok(MinuteValues::new(power_per_minute, date_time))
+        Ok(power_per_minute)
     }
 
     /// Calculates one day estimated power per minute
     ///
     /// # Arguments
     ///
-    /// * 'date_time' - date to calculate for
+    /// * 'day_date' - date to calculate for
     /// * 'temp' - ambient temperature in degrees Celsius
-    fn day_power(&self, date_time: DateTime<Local>, temp: [f64;1440], cloud_factor: [f64;1440]) -> Result<[f64;1440]> {
+    fn day_power(&self, day_date: DateTime<Utc>, temp: [f64;1440], cloud_factor: [f64;1440]) -> Result<[f64;1440]> {
         let mut power: [f64;1440] = [0.0;1440];
-        let sp = self.solar_positions(date_time)?;
+        let sp = self.solar_positions(day_date)?;
         let sun_intensity_factor = sun_intensity_factor(&sp.zenith);
         let (up, down) = self.full_sun_minute(&sp);
         let roof_temperature_east: [f64;1440] = self.roof_temperature(Some(up), &temp, &sp.incidence_east, &sun_intensity_factor)?;
@@ -111,9 +111,9 @@ impl PVProduction {
     ///
     /// # Arguments
     ///
-    /// * 'date_time' - DateTime object carrying the date of interest
-    fn solar_positions(&self, date_time: DateTime<Local>) -> Result<SolarPositions, SpaError> {
-        let mut input = Input::from_date_time(date_time);
+    /// * 'day_date' - date on which sunrise and sunset occur
+    fn solar_positions(&self, day_date: DateTime<Utc>) -> Result<SolarPositions, SpaError> {
+        let mut input = Input::from_date_time(day_date);
         input.latitude = self.lat;
         input.longitude = self.long;
         input.pressure = 1013.0;

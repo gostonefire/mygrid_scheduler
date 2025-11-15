@@ -19,6 +19,13 @@ pub enum SplineError {
 #[derive(Debug, Error)]
 #[error("TimeValuesError: {0}")]
 pub enum TimeValuesError {
-    #[error("Time value does not match date")]
+    #[error("time value does not match date")]
     TimeValue,
+}
+
+#[derive(Debug, Error)]
+#[error("ForecastValuesError: {0}")]
+pub enum ForecastValuesError {
+    #[error("forecast values are empty")]
+    EmptyForecastValues,
 }

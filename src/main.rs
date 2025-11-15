@@ -1,6 +1,6 @@
 use std::{fs, thread};
 use std::ops::Add;
-use chrono::{DateTime, Datelike, Duration, DurationRound, Local, NaiveDateTime, TimeDelta, Timelike};
+use chrono::{DateTime, Datelike, Duration, DurationRound, Local, NaiveDateTime, TimeDelta, Timelike, Utc};
 use rayon::ThreadPoolBuilder;
 use anyhow::Result;
 use glob::glob;
@@ -77,7 +77,7 @@ fn run(mgr: &mut Mgr, files: &Files) -> Result<()> {
     info!("Run start: {}, Schedule Start: {}", run_start, schedule_start);
 
     // Estimate how much battery capacity we lose between the run start and the schedule start
-    let start_soc = estimate_soc_in(mgr, run_start, schedule_start)?;
+    let start_soc = estimate_soc_in(mgr, run_start.with_timezone(&Utc), schedule_start.with_timezone(&Utc))?;
 
     // Calculate the new schedule
     let base_data = get_schedule(mgr, start_soc, schedule_start)?;
@@ -100,7 +100,7 @@ fn run(mgr: &mut Mgr, files: &Files) -> Result<()> {
 /// * 'mgr' - struct with managers
 /// * 'run_start' - time when calculation starts
 /// * 'schedule_start' - time when the new schedule is expected to start
-fn estimate_soc_in(mgr: &mut Mgr, run_start: DateTime<Local>, schedule_start: DateTime<Local>) -> Result<u8> {
+fn estimate_soc_in(mgr: &mut Mgr, run_start: DateTime<Utc>, schedule_start: DateTime<Utc>) -> Result<u8> {
     if schedule_start.date_naive() < run_start.date_naive() {
         return Err(SchedulingError("Schedule start is in the past".to_string()))?;
     }
@@ -110,7 +110,7 @@ fn estimate_soc_in(mgr: &mut Mgr, run_start: DateTime<Local>, schedule_start: Da
 
     // Calculate the time span between the run start and the schedule start
     // This can involve one or two days, depending on whether the run start falls into the same day as the schedule start
-    let mut dates: Vec<(DateTime<Local>, usize, usize)> = vec![(run_start, (run_start.hour() * 60 + run_start.minute()) as usize, 1440)];
+    let mut dates: Vec<(DateTime<Utc>, usize, usize)> = vec![(run_start, (run_start.hour() * 60 + run_start.minute()) as usize, 1440)];
     if run_start.day() == schedule_start.day() {
         dates = vec![(run_start, (run_start.hour() * 60 + run_start.minute()) as usize, (schedule_start.hour() * 60 + schedule_start.minute()) as usize)];
     } else if schedule_start.hour() != 0 || schedule_start.minute() != 0 {
@@ -122,7 +122,7 @@ fn estimate_soc_in(mgr: &mut Mgr, run_start: DateTime<Local>, schedule_start: Da
     let mut minutes: usize = 0;
     for date in dates {
         // Calculate production and consumption during the day that run_start falls into
-        let forecast = retry!(||mgr.forecast.new_forecast(date.0))?;
+        let forecast = retry!(||mgr.forecast.new_forecast(date.0, date.0.add(TimeDelta::hours(23))))?;
         let production = mgr.pv.estimate(&forecast, date.0)?;
         let consumption = mgr.cons.estimate(&forecast, date.0)?.minute_values()?;
 
