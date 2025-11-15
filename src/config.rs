@@ -58,6 +58,11 @@ pub struct TariffFees {
 }
 
 #[derive(Deserialize)]
+pub struct Scheduler {
+    pub min_saving: f64,
+}
+
+#[derive(Deserialize)]
 pub struct FoxESS {
     pub api_key: String,
     pub inverter_sn: String,
@@ -99,6 +104,7 @@ pub struct Config {
     pub production: ProductionParameters,
     pub charge: ChargeParameters,
     pub tariff_fees: TariffFees,
+    pub scheduler: Scheduler,
     pub fox_ess: FoxESS,
     pub forecast: Forecast,   
     pub mail: MailParameters,
