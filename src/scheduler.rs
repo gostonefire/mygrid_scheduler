@@ -5,7 +5,7 @@ use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use crate::common::models::{TimeValue, TariffValue};
 use rayon::prelude::*;
-use crate::config::ChargeParameters;
+use crate::config::Config;
 
 const TIME_BLOCKS: usize = 96;
 
@@ -135,6 +135,7 @@ pub struct Schedule {
     charge_kwh_instance: f64,
     charge_efficiency: f64,
     discharge_efficiency: f64,
+    min_saving: f64,
 }
 
 impl Schedule {
@@ -144,7 +145,7 @@ impl Schedule {
     ///
     /// * 'config' - configuration struct
     /// * 'schedule_blocks' - any existing schedule blocks
-    pub fn new(config: &ChargeParameters, schedule_blocks: Option<Vec<Block>>) -> Schedule {
+    pub fn new(config: &Config, schedule_blocks: Option<Vec<Block>>) -> Schedule {
         Schedule {
             start_time: Default::default(),
             end_time: Default::default(),
@@ -157,11 +158,12 @@ impl Schedule {
             base_cost: 0.0,
             net_prod: [0.0; TIME_BLOCKS],
             cons: [0.0; TIME_BLOCKS],
-            bat_kwh: config.bat_kwh,
-            soc_kwh: config.soc_kwh,
-            charge_kwh_instance: config.charge_kwh_hour,
-            charge_efficiency: config.charge_efficiency,
-            discharge_efficiency: config.discharge_efficiency,
+            bat_kwh: config.charge.bat_kwh,
+            soc_kwh: config.charge.soc_kwh,
+            charge_kwh_instance: config.charge.charge_kwh_hour,
+            charge_efficiency: config.charge.charge_efficiency,
+            discharge_efficiency: config.charge.discharge_efficiency,
+            min_saving: config.scheduler.min_saving,
         }
     }
 
@@ -218,6 +220,7 @@ impl Schedule {
 
     fn parallel_search(&mut self, charge_in: f64) -> BlockCollection {
         let mut best_record: BlockCollection = self.create_base_block_collection(charge_in);
+        let base_record = best_record.clone();
 
         let bcs = (0..self.tariffs.length).into_par_iter()
             .map(|seek_first_charge| self.seek_best(charge_in, seek_first_charge, best_record.clone()))
@@ -233,7 +236,11 @@ impl Schedule {
             }
         }
 
-        best_record
+        if best_record.total_cost < base_record.total_cost - self.min_saving {
+            best_record
+        } else {
+            base_record
+        }
     }
 
     /// Seeks the best schedule given input parameters.

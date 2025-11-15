@@ -53,7 +53,7 @@ pub fn init() -> Result<(Config, Mgr)> {
     let pv = PVProduction::new(&config.production, config.geo_ref.lat, config.geo_ref.long);
     let cons = Consumption::new(&config.consumption);
     let mail = Mail::new(&config.mail)?;
-    let schedule = Schedule::new(&config.charge, None);
+    let schedule = Schedule::new(&config, None);
 
     let mgr = Mgr {
         fox,
