@@ -1,7 +1,7 @@
 use std::ops::Add;
 use std::fmt;
 use std::fmt::Formatter;
-use chrono::{DateTime, DurationRound, Local, TimeDelta, Timelike, Utc};
+use chrono::{DateTime, DurationRound, TimeDelta, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use crate::common::models::{TimeValue, TariffValue};
 use rayon::prelude::*;
@@ -59,8 +59,8 @@ impl fmt::Display for Status {
 pub struct Block {
     block_id: usize,
     pub block_type: BlockType,
-    pub start_time: DateTime<Local>,
-    pub end_time: DateTime<Local>,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
     pub start_hour: usize,
     pub start_minute: usize,
     pub end_hour: usize,
@@ -122,8 +122,8 @@ struct PeriodMetrics {
 
 /// Struct representing the block schedule from the current hour and forward
 pub struct Schedule {
-    pub start_time: DateTime<Local>,
-    pub end_time: DateTime<Local>,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
     pub blocks: Vec<Block>,
     pub tariffs: Tariffs,
     pub total_cost: f64,
@@ -183,9 +183,9 @@ impl Schedule {
     /// * 'consumption' - consumption estimates per hour
     /// * 'soc_in' - any residual charge to bear in to the new schedule (stated as soc 0-100)
     /// * 'date_time' - the date time to stamp on the schedule
-    pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValue>, production: &Vec<TimeValue>, consumption: &Vec<TimeValue>, soc_in: u8, date_time: DateTime<Local>) {
+    pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValue>, production: &Vec<TimeValue>, consumption: &Vec<TimeValue>, soc_in: u8, date_time: DateTime<Utc>, schedule_length: i64) {
         let start_time = date_time.duration_trunc(TimeDelta::minutes(15)).unwrap();
-        let end_time = date_time.add(TimeDelta::days(1)).duration_trunc(TimeDelta::days(1)).unwrap();
+        let end_time = date_time.add(TimeDelta::minutes(schedule_length));
         let tariffs_in_scope: Vec<(f64, f64)> = tariffs.iter()
             .filter(|t| t.valid_time >= start_time && t.valid_time < end_time)
             .map(|t| (t.buy, t.sell))
@@ -598,7 +598,7 @@ impl Schedule {
 /// * 'blocks' - a vector of temporary internal blocks
 /// * 'soc_kwh' - kWh per soc used to convert from charge to State of Charge
 /// * 'date_time' - the date and time to be used to convert from hours to datetime in local TZ
-fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: DateTime<Local>) -> Vec<Block> {
+fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: DateTime<Utc>) -> Vec<Block> {
     let mut result: Vec<Block> = Vec::new();
     let time = date_time.duration_trunc(TimeDelta::days(1)).unwrap();
     let offset = ((date_time - time).num_minutes() / 15) as usize;

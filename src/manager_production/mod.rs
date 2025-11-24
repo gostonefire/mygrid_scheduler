@@ -50,15 +50,20 @@ impl PVProduction {
 
     /// Calculate estimates for the day included in the forecast vector.
     /// The result is an array of power per minute
+    /// 
+    /// Since the algorithm is based on Utc, while the result should reflect the local time zone,
+    /// we need to consider both the start time of the day (which in Utc can differ from Local)
+    /// and the date of the forecast which is used to get sunrise and sunset times.
     ///
     /// # Arguments
     ///
     /// * 'forecast' - a vector of hourly weather forecasts
+    /// * 'day_start' - the start time of the day to calculate for
     /// * 'day_date' - the date to calculate for
-    pub fn estimate(&self, forecast: &ForecastValues, day_date: DateTime<Utc>) -> Result<[f64;1440]> {
+    pub fn estimate(&self, forecast: &ForecastValues, day_start: DateTime<Utc>, day_date: DateTime<Utc>) -> Result<[f64;1440]> {
         let temp = forecast.minute_values(|f| f.temp)?;
         let cloud_factor = forecast.minute_values(|f| f.cloud_factor)?;
-        let power_per_minute = self.day_power(day_date, temp, cloud_factor)?;
+        let power_per_minute = self.day_power(day_start, day_date, temp, cloud_factor)?;
         
         Ok(power_per_minute)
     }
@@ -67,11 +72,12 @@ impl PVProduction {
     ///
     /// # Arguments
     ///
+    /// * 'day_start' - the start time of the day to calculate for
     /// * 'day_date' - date to calculate for
     /// * 'temp' - ambient temperature in degrees Celsius
-    fn day_power(&self, day_date: DateTime<Utc>, temp: [f64;1440], cloud_factor: [f64;1440]) -> Result<[f64;1440]> {
+    fn day_power(&self, day_start: DateTime<Utc>, day_date: DateTime<Utc>, temp: [f64;1440], cloud_factor: [f64;1440]) -> Result<[f64;1440]> {
         let mut power: [f64;1440] = [0.0;1440];
-        let sp = self.solar_positions(day_date)?;
+        let sp = self.solar_positions(day_start, day_date)?;
         let sun_intensity_factor = sun_intensity_factor(&sp.zenith);
         let (up, down) = self.full_sun_minute(&sp);
         let roof_temperature_east: [f64;1440] = self.roof_temperature(Some(up), &temp, &sp.incidence_east, &sun_intensity_factor)?;
@@ -111,8 +117,9 @@ impl PVProduction {
     ///
     /// # Arguments
     ///
-    /// * 'day_date' - date on which sunrise and sunset occur
-    fn solar_positions(&self, day_date: DateTime<Utc>) -> Result<SolarPositions, SpaError> {
+    /// * 'day_start' - the start time of the day to calculate for
+    /// * 'day_date' - the date on which sunrise and sunset occur
+    fn solar_positions(&self, day_start: DateTime<Utc>, day_date: DateTime<Utc>) -> Result<SolarPositions, SpaError> {
         let mut input = Input::from_date_time(day_date);
         input.latitude = self.lat;
         input.longitude = self.long;
@@ -131,33 +138,34 @@ impl PVProduction {
 
         spa.input.function = Function::SpaZaInc;
 
-        let mut time_of_interest = sunrise;
-
         let mut incidence_east: [f64;1440] = [90.0; 1440];
         let mut incidence_west: [f64;1440] = [90.0; 1440];
         let mut zenith: [f64;1440] = [90.0; 1440];
         let mut azimuth: [f64;1440] = [0.0; 1440];
         let mut elevation: [f64;1440] = [0.0; 1440];
 
-        while time_of_interest < sunset {
-            spa.input.date_time(time_of_interest);
-            let toi = (time_of_interest.hour() * 60 + time_of_interest.minute()) as usize;
+        for toi in 0..1440usize {
+            let hour = toi / 60;
+            let minute = toi % 60;
+            let time_of_interest = day_start.add(TimeDelta::hours(hour as i64) + TimeDelta::minutes(minute as i64));
 
-            spa.input.azm_rotation = self.panel_east_azm;
-            spa.spa_calculate()?;
+            if time_of_interest >= sunrise || time_of_interest < sunset {
+                spa.input.date_time(time_of_interest);
 
-            incidence_east[toi] = spa.spa_za_inc.incidence.min(90.0);
-            zenith[toi] = spa.spa_za.zenith.clamp(0.0, 90.0);
-            azimuth[toi] = spa.spa_za.azimuth;
-            elevation[toi] = spa.spa_za.e.max(0.0);
+                spa.input.azm_rotation = self.panel_east_azm;
+                spa.spa_calculate()?;
 
-            spa.input.azm_rotation = 180.0 + self.panel_east_azm;
-            spa.spa_calculate()?;
-            incidence_west[toi] = spa.spa_za_inc.incidence.min(90.0);
+                incidence_east[toi] = spa.spa_za_inc.incidence.min(90.0);
+                zenith[toi] = spa.spa_za.zenith.clamp(0.0, 90.0);
+                azimuth[toi] = spa.spa_za.azimuth;
+                elevation[toi] = spa.spa_za.e.max(0.0);
 
-            time_of_interest = time_of_interest.add(TimeDelta::minutes(1));
+                spa.input.azm_rotation = 180.0 + self.panel_east_azm;
+                spa.spa_calculate()?;
+                incidence_west[toi] = spa.spa_za_inc.incidence.min(90.0);
+            }
+
         }
-
 
         Ok(SolarPositions {
             incidence_east,

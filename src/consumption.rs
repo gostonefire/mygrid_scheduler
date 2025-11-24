@@ -1,7 +1,9 @@
-use chrono::{DateTime, Datelike, Local, Timelike};
+use std::ops::Add;
+use chrono::{Datelike, TimeDelta, Timelike};
 use anyhow::Result;
 use crate::config::ConsumptionParameters;
-use crate::common::models::{ForecastValues, TimeValue, TimeValues};
+use crate::common::models::ForecastValues;
+use crate::errors::ForecastValuesError;
 use crate::spline::MonotonicCubicSpline;
 
 
@@ -41,23 +43,35 @@ impl Consumption {
         }
     }
     
-    /// Calculates hourly household consumption based on temperature forecast
+    /// Calculates hourly household consumption based on the temperature forecast and
+    /// returns it as minute values in an array.
+    ///
+    /// Since all datetime values are to be in Utc, we need the current offset to compensate
+    /// for the household diagram being in local time (it is given from how people act during
+    /// a day regardless of the time zone or daylight saving time).
     ///
     /// # Arguments
     ///
     /// * 'forecast' - the temperature forecast
-    /// * 'date_time' - the date to calculate for
-    pub fn estimate(&self, forecast: &ForecastValues, date_time: DateTime<Local>) -> Result<TimeValues> {
-        let mut power: TimeValues = TimeValues::new(date_time);
+    /// * 'local_offset' - current offset between Utc and Local in seconds
+    pub fn estimate(&self, forecast: &ForecastValues, local_offset: i64) -> Result<[f64;1440]> {
+        if forecast.forecast.len() != 24 { Err(ForecastValuesError::WrongForecastLength)? }
 
-        for v in forecast.forecast.iter().filter(|v| v.valid_time.date_naive() == date_time.date_naive()) {
-            let week_day = v.valid_time.weekday().num_days_from_monday() as usize;
-            let hour = v.valid_time.hour() as usize;
+        let mut p: [f64;1440] = [0.0;1440];
+        let mut minute_index = 0usize;
+
+        for v in forecast.forecast.iter() {
+            let valid_time = v.valid_time.add(TimeDelta::seconds(local_offset));
+            let week_day = valid_time.weekday().num_days_from_monday() as usize;
+            let hour = valid_time.hour() as usize;
             let power_per_hour = self.consumption_curve(v.temp) + self.diagram[week_day][hour];
-            power.push(TimeValue { valid_time: v.valid_time, data: power_per_hour })?;
+            for i in minute_index..minute_index + 60 {
+                p[i] = power_per_hour / 60.0;
+            }
+            minute_index += 60;
         }
 
-        Ok(power)
+        Ok(p)
     }
 
     /// Calculates consumption based on temperature over an estimated curve.

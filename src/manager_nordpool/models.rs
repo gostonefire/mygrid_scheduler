@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
@@ -10,7 +10,7 @@ pub struct EntryPerArea {
 #[derive(Deserialize, Debug)]
 pub struct MultiAreaEntries {
     #[serde(rename = "deliveryStart")]
-    pub delivery_start: DateTime<Local>,
+    pub delivery_start: DateTime<Utc>,
     #[serde(rename = "entryPerArea")]
     pub entry_per_area: EntryPerArea,
 }

@@ -2,7 +2,7 @@ pub mod errors;
 mod models;
 
 use std::time::Duration;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Utc};
 use ureq::Agent;
 use anyhow::Result;
 use crate::manager_nordpool::errors::NordPoolError;
@@ -51,7 +51,7 @@ impl NordPool {
     /// # Arguments
     ///
     /// * 'date_time' - the date to retrieve prices for
-    pub fn get_tariffs(&self, date_time: DateTime<Local>) -> Result<Vec<TariffValue>> {
+    pub fn get_tariffs(&self, date_time: DateTime<Utc>) -> Result<Vec<TariffValue>> {
         let result = self.get_day_tariffs(date_time)?;
 
         Ok(result)
@@ -62,7 +62,7 @@ impl NordPool {
     /// # Arguments
     ///
     /// * 'date_time' - the date to retrieve prices for
-    fn get_day_tariffs(&self, date_time: DateTime<Local>) -> Result<Vec<TariffValue>> {
+    fn get_day_tariffs(&self, date_time: DateTime<Utc>) -> Result<Vec<TariffValue>> {
         // https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices?date=2025-10-22&market=DayAhead&deliveryArea=SE4&currency=SEK
         let url = "https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices";
         let date = format!("{}", date_time.format("%Y-%m-%d"));
@@ -118,7 +118,7 @@ impl NordPool {
     /// * 'day_avg' - average tariff for the day as from NordPool in SEK/MWh
     /// * 'tariff' - spot fee as from NordPool in SEK/MWh
     /// * 'delivery_start' - start time for the spot
-    fn add_vat_markup(&self, day_avg: f64, tariff: f64, delivery_start: DateTime<Local>) -> TariffValue {
+    fn add_vat_markup(&self, day_avg: f64, tariff: f64, delivery_start: DateTime<Utc>) -> TariffValue {
         let price = tariff / 1000.0; // SEK per MWh to per kWh
         let grid_fees = (self.variable_fee + self.energy_tax) / 100.0 + self.spot_fee_percentage * day_avg;
         let trade_fees = (self.swedish_power_grid + self.balance_responsibility + self.electric_certificate +
