@@ -47,7 +47,7 @@ impl Forecast {
     /// # Arguments
     ///
     /// * 'from' - the datetime to get forecast from
-    /// * 'to' - the datetime to get forecast to (inclusive)
+    /// * 'to' - the datetime to get forecast to (non-inclusive)
     pub fn new_forecast(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<ForecastValues> {
         let from = from.duration_trunc(TimeDelta::hours(1))?;
         let to = to.duration_trunc(TimeDelta::hours(1))?;

@@ -1,8 +1,9 @@
 pub mod errors;
 mod models;
 
+use std::ops::Add;
 use std::time::Duration;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use ureq::Agent;
 use anyhow::Result;
 use crate::manager_nordpool::errors::NordPoolError;
@@ -50,9 +51,10 @@ impl NordPool {
     ///
     /// # Arguments
     ///
-    /// * 'date_time' - the date to retrieve prices for
-    pub fn get_tariffs(&self, date_time: DateTime<Utc>) -> Result<Vec<TariffValue>> {
-        let result = self.get_day_tariffs(date_time)?;
+    /// * 'day_start' - the start time of the day to retrieve prices for
+    /// * 'day_date' - the date to retrieve prices for
+    pub fn get_tariffs(&self, day_start: DateTime<Utc>, day_date: DateTime<Utc>) -> Result<Vec<TariffValue>> {
+        let result = self.get_day_tariffs(day_start, day_date)?;
 
         Ok(result)
     }
@@ -61,11 +63,12 @@ impl NordPool {
     ///
     /// # Arguments
     ///
-    /// * 'date_time' - the date to retrieve prices for
-    fn get_day_tariffs(&self, date_time: DateTime<Utc>) -> Result<Vec<TariffValue>> {
+    /// * 'day_start' - the start time of the day to retrieve prices for
+    /// * 'day_date' - the date to retrieve prices for
+    fn get_day_tariffs(&self, day_start: DateTime<Utc>, day_date: DateTime<Utc>) -> Result<Vec<TariffValue>> {
         // https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices?date=2025-10-22&market=DayAhead&deliveryArea=SE4&currency=SEK
         let url = "https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices";
-        let date = format!("{}", date_time.format("%Y-%m-%d"));
+        let date = format!("{}", day_date.format("%Y-%m-%d"));
         let query = vec![
             ("date", date.as_str()),
             ("market", "DayAhead"),
@@ -87,7 +90,7 @@ impl NordPool {
             .read_to_string()?;
 
         let tariffs: Tariffs = serde_json::from_str(&json)?;
-        self.tariffs_to_vec(&tariffs)
+        self.tariffs_to_vec(&tariffs, day_start)
     }
 
     /// Transforms the Tariffs struct to a plain vector of prices
@@ -95,15 +98,16 @@ impl NordPool {
     /// # Arguments
     ///
     /// * 'tariffs' - the struct containing prices
-    fn tariffs_to_vec(&self, tariffs: &Tariffs) -> Result<Vec<TariffValue>> {
-        if tariffs.multi_area_entries.len() != 96 {
-            return Err(NordPoolError::Document("number of day tariffs not equal to 96".into()))?
+    fn tariffs_to_vec(&self, tariffs: &Tariffs, day_start: DateTime<Utc>) -> Result<Vec<TariffValue>> {
+        let entries = tariffs.multi_area_entries.len();
+        if entries < 96 {
+            return Err(NordPoolError::Document("number of day tariffs less than 96".into()))?
         }
-
-        let day_avg = tariffs.multi_area_entries.iter().map(|t| t.entry_per_area.se4).sum::<f64>() / 96.0 / 1000.0;
+        let day_end = day_start.add(TimeDelta::hours(24));
+        let day_avg = tariffs.multi_area_entries.iter().map(|t| t.entry_per_area.se4).sum::<f64>() / entries as f64 / 1000.0;
 
         let mut result: Vec<TariffValue> = Vec::new();
-        tariffs.multi_area_entries.iter().for_each(
+        tariffs.multi_area_entries.iter().filter(|t| t.delivery_start >= day_start && t.delivery_start < day_end).for_each(
             |t| {
                 result.push(self.add_vat_markup(day_avg, t.entry_per_area.se4, t.delivery_start));
             });

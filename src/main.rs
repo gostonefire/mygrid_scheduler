@@ -60,7 +60,8 @@ fn main() -> Result<()> {
 /// * 'mgr' - struct with configured managers
 /// * 'files' - files config
 fn run(mgr: &mut Mgr, files: &Files) -> Result<()> {
-    let run_start = DateTime::parse_from_rfc3339("2025-11-23T23:00:00+01:00")?.with_timezone(&Local);
+    let run_start = DateTime::parse_from_rfc3339("2025-10-25T23:00:00+02:00")?.with_timezone(&Local);
+    dbg!(run_start);
 
     // The run start is always assumed to be at call of this function, the schedule start, however,
     // is assumed to be some x minutes in the future since it takes quite a while to calculate.
@@ -155,7 +156,7 @@ fn get_schedule(mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> Result<Bas
 
     let production = MinuteValues::new(pv_estimate, run_schema.schedule_day_start).time_groups(15);
     let consumption = MinuteValues::new(cons_estimate, run_schema.schedule_day_start).time_groups(15);
-    let tariffs = retry!(||mgr.nordpool.get_tariffs(run_schema.schedule_date))?;
+    let tariffs = retry!(||mgr.nordpool.get_tariffs(run_schema.schedule_day_start, run_schema.schedule_date))?;
 
     mgr.schedule.update_scheduling(&tariffs, &production.data, &consumption.data, soc_in, run_schema.schedule_start, run_schema.schedule_length);
 
@@ -187,8 +188,10 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> Result<RunSchema> {
     let schedule_start = if run_start.hour() < 21 || run_start.hour() * 60 + run_start.minute() >= 1395 {
         run_start.add(TimeDelta::hours(1)).duration_trunc(TimeDelta::minutes(15))?
     } else {
-        run_start.add(TimeDelta::days(1)).duration_trunc(TimeDelta::days(1))?
+        run_start.add(TimeDelta::days(1)).duration_trunc(TimeDelta::days(1))?.duration_trunc(TimeDelta::days(1))?
     };
+    dbg!(schedule_start);
+
     let run_start_utc = run_start.with_timezone(&Utc);
     let run_day_start_utc = run_start.duration_trunc(TimeDelta::days(1))?.with_timezone(&Utc);
     let run_day_end_utc = run_day_start_utc.add(TimeDelta::days(1));
