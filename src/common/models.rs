@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use chrono::{DateTime, Timelike, Utc};
+use std::ops::Add;
+use chrono::{DateTime, TimeDelta, Utc};
 use serde::Serialize;
 use anyhow::Result;
 use crate::errors::ForecastValuesError;
@@ -64,7 +65,7 @@ impl MinuteValues {
     /// # Arguments
     /// 
     /// * 'data' - a day worth of data per minute
-    /// * 'date_time' - the date the data is valid for
+    /// * 'date_time' - the date and time the data starts with
     pub fn new(data: [f64;1440], date_time: DateTime<Utc>) -> MinuteValues {
         MinuteValues {data, date_time}
     }
@@ -94,8 +95,6 @@ impl MinuteValues {
     ///
     /// # Arguments
     ///
-    /// * 'data' - minute values over one full day
-    /// * 'date_time' - 'date_time' - date to use as a basis for the result
     /// * 'group' - minutes per group from input data
     fn group_minute_values(&self, group: u32) -> Vec<(DateTime<Utc>, f64)> {
         let mut map: HashMap<u32, (f64, f64)> = HashMap::new();
@@ -110,7 +109,7 @@ impl MinuteValues {
         let mut grouped = map
             .into_iter()
             .map(|(t, v)| {
-                let dt = self.date_time.with_hour(t / 60u32).unwrap().with_minute(t % 60u32).unwrap();
+                let dt = self.date_time.add(TimeDelta::minutes(t as i64));
                 (dt, v.0 / v.1)
             })
             .collect::<Vec<(DateTime<Utc>, f64)>>();

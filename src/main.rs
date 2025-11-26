@@ -1,6 +1,6 @@
 use std::{fs, thread};
 use std::ops::Add;
-use chrono::{DateTime, Duration, DurationRound, Local, NaiveDateTime, TimeDelta, Timelike, Utc};
+use chrono::{DateTime, Duration, DurationRound, Local, NaiveDate, NaiveDateTime, TimeDelta, Timelike, Utc};
 use rayon::ThreadPoolBuilder;
 use anyhow::Result;
 use glob::glob;
@@ -195,12 +195,12 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> Result<RunSchema> {
     let run_start_utc = run_start.with_timezone(&Utc);
     let run_day_start_utc = run_start.duration_trunc(TimeDelta::days(1))?.with_timezone(&Utc);
     let run_day_end_utc = run_day_start_utc.add(TimeDelta::days(1));
-    let run_date_utc = run_start.with_hour(12).unwrap().with_timezone(&Utc).duration_trunc(TimeDelta::days(1))?;
+    let run_date_naive = run_start.date_naive();
 
     let schedule_start_utc = schedule_start.with_timezone(&Utc);
     let schedule_day_start_utc = schedule_start.duration_trunc(TimeDelta::days(1))?.with_timezone(&Utc);
     let schedule_day_end_utc = schedule_day_start_utc.add(TimeDelta::days(1));
-    let schedule_date_utc = schedule_start.with_hour(12).unwrap().with_timezone(&Utc).duration_trunc(TimeDelta::days(1))?;
+    let schedule_date_naive = schedule_start.date_naive();
 
     let schedule_length = 24 * 60 - (schedule_start_utc - schedule_day_start_utc).num_minutes();
 
@@ -225,12 +225,12 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> Result<RunSchema> {
         run_start: run_start_utc,
         run_day_start: run_day_start_utc,
         run_day_end: run_day_end_utc,
-        run_date: run_date_utc,
+        run_date: run_date_naive,
         schedule_start: schedule_start_utc,
         schedule_day_start: schedule_day_start_utc,
         schedule_day_end: schedule_day_end_utc,
+        schedule_date: schedule_date_naive,
         schedule_length,
-        schedule_date: schedule_date_utc,
         local_offset: run_start.offset().local_minus_utc() as i64,
         run_date_1,
         run_date_2,
@@ -313,12 +313,12 @@ struct RunSchema {
     run_start: DateTime<Utc>,
     run_day_start: DateTime<Utc>,
     run_day_end: DateTime<Utc>,        // Non-inclusive
-    run_date: DateTime<Utc>,
+    run_date: NaiveDate,
     schedule_start: DateTime<Utc>,
     schedule_day_start: DateTime<Utc>,
     schedule_day_end: DateTime<Utc>,   // Non-Inclusive
+    schedule_date: NaiveDate,
     schedule_length: i64,
-    schedule_date: DateTime<Utc>,
     local_offset: i64,
     run_date_1: RunMinutes,
     run_date_2: Option<RunMinutes>,

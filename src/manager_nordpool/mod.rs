@@ -3,7 +3,7 @@ mod models;
 
 use std::ops::Add;
 use std::time::Duration;
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, NaiveDate, TimeDelta, TimeZone, Utc};
 use ureq::Agent;
 use anyhow::Result;
 use crate::manager_nordpool::errors::NordPoolError;
@@ -53,8 +53,9 @@ impl NordPool {
     ///
     /// * 'day_start' - the start time of the day to retrieve prices for
     /// * 'day_date' - the date to retrieve prices for
-    pub fn get_tariffs(&self, day_start: DateTime<Utc>, day_date: DateTime<Utc>) -> Result<Vec<TariffValue>> {
-        let result = self.get_day_tariffs(day_start, day_date)?;
+    pub fn get_tariffs(&self, day_start: DateTime<Utc>, day_date: NaiveDate) -> Result<Vec<TariffValue>> {
+        let day_date_utc = TimeZone::from_utc_datetime(&Utc, &day_date.and_hms_opt(0,0,0).unwrap());
+        let result = self.get_day_tariffs(day_start, day_date_utc)?;
 
         Ok(result)
     }

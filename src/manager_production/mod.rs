@@ -1,7 +1,7 @@
 pub mod errors;
 
 use std::ops::Add;
-use chrono::{DateTime, DurationRound, TimeDelta, Timelike, Utc};
+use chrono::{DateTime, DurationRound, NaiveDate, TimeDelta, TimeZone, Timelike, Utc};
 use anyhow::Result;
 use spa_sra::errors::SpaError;
 use spa_sra::spa::{Function, Input, SpaData};
@@ -60,7 +60,7 @@ impl PVProduction {
     /// * 'forecast' - a vector of hourly weather forecasts
     /// * 'day_start' - the start time of the day to calculate for
     /// * 'day_date' - the date to calculate for
-    pub fn estimate(&self, forecast: &ForecastValues, day_start: DateTime<Utc>, day_date: DateTime<Utc>) -> Result<[f64;1440]> {
+    pub fn estimate(&self, forecast: &ForecastValues, day_start: DateTime<Utc>, day_date: NaiveDate) -> Result<[f64;1440]> {
         let temp = forecast.minute_values(|f| f.temp)?;
         let cloud_factor = forecast.minute_values(|f| f.cloud_factor)?;
         let power_per_minute = self.day_power(day_start, day_date, temp, cloud_factor)?;
@@ -75,7 +75,7 @@ impl PVProduction {
     /// * 'day_start' - the start time of the day to calculate for
     /// * 'day_date' - date to calculate for
     /// * 'temp' - ambient temperature in degrees Celsius
-    fn day_power(&self, day_start: DateTime<Utc>, day_date: DateTime<Utc>, temp: [f64;1440], cloud_factor: [f64;1440]) -> Result<[f64;1440]> {
+    fn day_power(&self, day_start: DateTime<Utc>, day_date: NaiveDate, temp: [f64;1440], cloud_factor: [f64;1440]) -> Result<[f64;1440]> {
         let mut power: [f64;1440] = [0.0;1440];
         let sp = self.solar_positions(day_start, day_date)?;
         let sun_intensity_factor = sun_intensity_factor(&sp.zenith);
@@ -119,8 +119,9 @@ impl PVProduction {
     ///
     /// * 'day_start' - the start time of the day to calculate for
     /// * 'day_date' - the date on which sunrise and sunset occur
-    fn solar_positions(&self, day_start: DateTime<Utc>, day_date: DateTime<Utc>) -> Result<SolarPositions, SpaError> {
-        let mut input = Input::from_date_time(day_date);
+    fn solar_positions(&self, day_start: DateTime<Utc>, day_date: NaiveDate) -> Result<SolarPositions, SpaError> {
+        let day_date_utc = TimeZone::from_utc_datetime(&Utc, &day_date.and_hms_opt(0,0,0).unwrap());
+        let mut input = Input::from_date_time(day_date_utc);
         input.latitude = self.lat;
         input.longitude = self.long;
         input.pressure = 1013.0;
