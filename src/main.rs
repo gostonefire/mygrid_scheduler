@@ -60,8 +60,8 @@ fn main() -> Result<()> {
 /// * 'mgr' - struct with configured managers
 /// * 'files' - files config
 fn run(mgr: &mut Mgr, files: &Files) -> Result<()> {
-    let run_start = DateTime::parse_from_rfc3339("2025-10-25T23:00:00+02:00")?.with_timezone(&Local);
-    dbg!(run_start);
+    let run_start = DateTime::parse_from_rfc3339("2025-11-26T15:39:28.721902500+01:00")?.with_timezone(&Local);
+
 
     // The run start is always assumed to be at call of this function, the schedule start, however,
     // is assumed to be some x minutes in the future since it takes quite a while to calculate.
@@ -71,6 +71,7 @@ fn run(mgr: &mut Mgr, files: &Files) -> Result<()> {
     // * Otherwise, we calculate a schedule for the entire next day
     //let run_start = Local::now();
     let run_schema = get_schedule_start_schema(run_start)?;
+    dbg!(run_start);
     dbg!(&run_schema);
     info!("Run start: {}, Schedule Start: {}", run_schema.run_start, run_schema.schedule_start);
 

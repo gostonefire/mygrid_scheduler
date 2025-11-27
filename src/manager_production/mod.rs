@@ -146,11 +146,9 @@ impl PVProduction {
         let mut elevation: [f64;1440] = [0.0; 1440];
 
         for toi in 0..1440usize {
-            let hour = toi / 60;
-            let minute = toi % 60;
-            let time_of_interest = day_start.add(TimeDelta::hours(hour as i64) + TimeDelta::minutes(minute as i64));
+            let time_of_interest = day_start.add(TimeDelta::minutes(toi as i64));
 
-            if time_of_interest >= sunrise || time_of_interest < sunset {
+            if time_of_interest >= sunrise && time_of_interest < sunset {
                 spa.input.date_time(time_of_interest);
 
                 spa.input.azm_rotation = self.panel_east_azm;
@@ -174,8 +172,8 @@ impl PVProduction {
             azimuth,
             elevation,
             zenith,
-            sunrise: (sunrise.hour() * 60 + sunrise.minute()) as usize,
-            sunset: (sunset.hour() * 60 + sunset.minute()) as usize,
+            sunrise: (sunrise - day_start).num_minutes() as usize,
+            sunset: (sunset - day_start).num_minutes() as usize,
         })
     }
 
