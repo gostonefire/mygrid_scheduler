@@ -66,7 +66,7 @@ impl Consumption {
             let hour = valid_time.hour() as usize;
             let power_per_hour = self.consumption_curve(v.temp) + self.diagram[week_day][hour];
             for i in minute_index..minute_index + 60 {
-                p[i] = power_per_hour / 60.0;
+                p[i] = power_per_hour;
             }
             minute_index += 60;
         }

@@ -77,14 +77,15 @@ impl MinuteValues {
     /// # Arguments
     ///
     /// * 'group' - minutes per group from input data
-    pub fn time_groups(&self, group: u32) -> TimeValues {
+    /// * 'integrate' - whether to convert to unit hour or just average within each group
+    pub fn time_groups(&self, group: u32, integrate: bool) -> TimeValues {
         let grouped = self.group_minute_values(group);
 
         let mut data = Vec::new();
         grouped.into_iter().for_each(|(date, value)| {
             data.push(TimeValue {
                 valid_time: date,
-                data: value / (60.0 / group as f64),
+                data: if integrate { value / (60.0 / group as f64) } else { value },
             });
         });
 

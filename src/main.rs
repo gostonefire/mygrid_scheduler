@@ -60,19 +60,13 @@ fn main() -> Result<()> {
 /// * 'mgr' - struct with configured managers
 /// * 'files' - files config
 fn run(mgr: &mut Mgr, files: &Files) -> Result<()> {
-    let run_start = DateTime::parse_from_rfc3339("2025-11-26T15:39:28.721902500+01:00")?.with_timezone(&Local);
+    // let run_start = DateTime::parse_from_rfc3339("2025-11-26T15:39:28.721902500+01:00")?.with_timezone(&Local);
 
 
-    // The run start is always assumed to be at call of this function, the schedule start, however,
-    // is assumed to be some x minutes in the future since it takes quite a while to calculate.
-    // The rules are:
-    // * If the run starts before 21:00, we calculate a schedule for the rest of the current day.
-    // * if the run starts at or after 23:15, we add one hour and cannibalize from the next day (1395 is the minute of the day for 23:15).
-    // * Otherwise, we calculate a schedule for the entire next day
-    //let run_start = Local::now();
+    // The run start is always assumed to be at call of this function
+    let run_start = Local::now();
     let run_schema = get_schedule_start_schema(run_start)?;
-    dbg!(run_start);
-    dbg!(&run_schema);
+
     info!("Run start: {}, Schedule Start: {}", run_schema.run_start, run_schema.schedule_start);
 
     // Estimate how much battery capacity we lose between the run start and the schedule start
@@ -118,7 +112,7 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema) -> Result<u8> {
         // Calculate the power used in the time span between the run start and the schedule start
         // The power used is divided by the number of minutes to get the average power used per hour
         power_used += (run_schema.run_date_1.run_start_minute..run_schema.run_date_1.run_end_minute).fold(0f64, |acc, i|
-            acc + (production[i] - consumption[i])) / 1000.0;
+            acc + (production[i] - consumption[i])) / 60.0 / 1000.0;
 
         minutes += run_schema.run_date_1.run_end_minute - run_schema.run_date_1.run_start_minute;
     }
@@ -131,7 +125,7 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema) -> Result<u8> {
 
         // Calculate the power used in the time span between the run start and the schedule start
         power_used += (schedule_date.run_start_minute..schedule_date.run_end_minute).fold(0f64, |acc, i|
-            acc + (production[i] - consumption[i])) / 1000.0;
+            acc + (production[i] - consumption[i])) / 60.0 / 1000.0;
 
         minutes += schedule_date.run_end_minute - schedule_date.run_start_minute;
     }
@@ -155,8 +149,8 @@ fn get_schedule(mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> Result<Bas
     let pv_estimate = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_date)?;
     let cons_estimate = mgr.cons.estimate(&forecast, run_schema.local_offset)?;
 
-    let production = MinuteValues::new(pv_estimate, run_schema.schedule_day_start).time_groups(15);
-    let consumption = MinuteValues::new(cons_estimate, run_schema.schedule_day_start).time_groups(15);
+    let production = MinuteValues::new(pv_estimate, run_schema.schedule_day_start).time_groups(15, true);
+    let consumption = MinuteValues::new(cons_estimate, run_schema.schedule_day_start).time_groups(15, true);
     let tariffs = retry!(||mgr.nordpool.get_tariffs(run_schema.schedule_day_start, run_schema.schedule_date))?;
 
     mgr.schedule.update_scheduling(&tariffs, &production.data, &consumption.data, soc_in, run_schema.schedule_start, run_schema.schedule_length);
@@ -165,8 +159,8 @@ fn get_schedule(mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> Result<Bas
         date_time: run_schema.schedule_start,
         base_cost: mgr.schedule.base_cost,
         schedule_cost: mgr.schedule.total_cost,
-        production: MinuteValues::new(pv_estimate, run_schema.schedule_day_start).time_groups(5).data,
-        consumption: MinuteValues::new(cons_estimate, run_schema.schedule_day_start).time_groups(5).data,
+        production: MinuteValues::new(pv_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
+        consumption: MinuteValues::new(cons_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
         forecast: forecast.forecast,
         tariffs,
     };
