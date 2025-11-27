@@ -3,7 +3,7 @@ use std::fmt;
 use std::fmt::Formatter;
 use chrono::{DateTime, DurationRound, TimeDelta, Timelike, Utc};
 use serde::{Deserialize, Serialize};
-use crate::common::models::{TimeValue, TariffValue};
+use crate::models::{TimeValue, TariffValue};
 use rayon::prelude::*;
 use crate::config::Config;
 

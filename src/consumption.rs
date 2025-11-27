@@ -2,7 +2,7 @@ use std::ops::Add;
 use chrono::{Datelike, TimeDelta, Timelike};
 use anyhow::Result;
 use crate::config::ConsumptionParameters;
-use crate::common::models::ForecastValues;
+use crate::models::ForecastValues;
 use crate::errors::ForecastValuesError;
 use crate::spline::MonotonicCubicSpline;
 

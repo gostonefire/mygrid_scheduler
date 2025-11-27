@@ -7,7 +7,7 @@ use chrono::{DateTime, NaiveDate, TimeDelta, TimeZone, Utc};
 use ureq::Agent;
 use anyhow::Result;
 use crate::manager_nordpool::errors::NordPoolError;
-use crate::common::models::{TariffValue};
+use crate::models::{TariffValue};
 use crate::config::TariffFees;
 use crate::manager_nordpool::models::Tariffs;
 

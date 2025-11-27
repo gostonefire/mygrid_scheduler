@@ -1,12 +1,12 @@
 pub mod errors;
 
 use std::ops::Add;
-use chrono::{DateTime, DurationRound, NaiveDate, TimeDelta, TimeZone, Timelike, Utc};
+use chrono::{DateTime, DurationRound, NaiveDate, TimeDelta, TimeZone, Utc};
 use anyhow::Result;
 use spa_sra::errors::SpaError;
 use spa_sra::spa::{Function, Input, SpaData};
 use crate::config::ProductionParameters;
-use crate::common::models::ForecastValues;
+use crate::models::ForecastValues;
 use crate::manager_production::errors::ProdError;
 
 /// Struct for calculating PV production based on solar positions and cloud conditions

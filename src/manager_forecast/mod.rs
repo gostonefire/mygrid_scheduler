@@ -7,7 +7,7 @@ use ureq::Agent;
 use anyhow::Result;
 use crate::config::Config;
 use crate::manager_forecast::errors::ForecastError;
-use crate::common::models::{ForecastValue, ForecastValues};
+use crate::models::{ForecastValue, ForecastValues};
 use crate::manager_forecast::models::ForecastRecord;
 
 /// Struct for managing whether forecasts
