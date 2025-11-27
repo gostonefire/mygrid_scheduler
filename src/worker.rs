@@ -1,5 +1,4 @@
-use crate::thread;
-use std::fs;
+use std::{fs, thread};
 use std::ops::Add;
 use chrono::{DateTime, Duration, DurationRound, Local, NaiveDate, NaiveDateTime, TimeDelta, Timelike, Utc};
 use glob::glob;
@@ -130,7 +129,7 @@ fn get_schedule(mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> anyhow::Re
 ///
 /// * 'run_start' - time when calculation starts
 fn get_schedule_start_schema(run_start: DateTime<Local>) -> anyhow::Result<RunSchema> {
-    // The run start is given, the schedule start, however, is assumed to be some x minutes 
+    // The run start is given, the schedule start, however, is assumed to be some x minutes
     // in the future since it takes quite a while to calculate.
     //
     // The rules are:

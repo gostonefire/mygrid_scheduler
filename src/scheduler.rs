@@ -179,10 +179,11 @@ impl Schedule {
     /// # Arguments
     ///
     /// * 'tariffs' - tariffs as given from NordPool
-    /// * 'production' - production estimates per hour
-    /// * 'consumption' - consumption estimates per hour
+    /// * 'production' - production estimates per quarter
+    /// * 'consumption' - consumption estimates per quarter
     /// * 'soc_in' - any residual charge to bear in to the new schedule (stated as soc 0-100)
-    /// * 'date_time' - the date time to stamp on the schedule
+    /// * 'date_time' - the date time when the schedule shall start
+    /// * 'schedule_length' - the length of the schedule to create in minutes
     pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValue>, production: &Vec<TimeValue>, consumption: &Vec<TimeValue>, soc_in: u8, date_time: DateTime<Utc>, schedule_length: i64) {
         let start_time = date_time.duration_trunc(TimeDelta::minutes(15)).unwrap();
         let end_time = date_time.add(TimeDelta::minutes(schedule_length));
@@ -218,6 +219,11 @@ impl Schedule {
             .end_time.add(TimeDelta::minutes(15));
     }
 
+    /// Function to break up the scheduling process over parallel threads
+    /// 
+    /// # Arguments
+    /// 
+    /// * 'charge_in' - the charge in the battery when the schedule starts
     fn parallel_search(&mut self, charge_in: f64) -> BlockCollection {
         let mut best_record: BlockCollection = self.create_base_block_collection(charge_in);
         let base_record = best_record.clone();

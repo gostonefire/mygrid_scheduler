@@ -72,7 +72,7 @@ impl MinuteValues {
 
     /// Returns a grouped version
     /// 
-    /// Data is grouped per `group` minutes as an average, and the data is normalized to value per hour
+    /// Data is grouped per `group` minutes as an average, and the data can be integrated to value hour
     ///
     /// # Arguments
     ///

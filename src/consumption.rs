@@ -9,8 +9,6 @@ use crate::spline::MonotonicCubicSpline;
 
 /// Struct for calculating the consumption load per hour given a weather forecast
 ///
-/// The business logic is implemented in the calculate_consumption function. The current version is
-/// just an inverse linear proportion between temperature and estimated load.
 pub struct Consumption {
     min_avg_load: f64,
     max_avg_load: f64,
@@ -79,7 +77,7 @@ impl Consumption {
     /// an outdoor temperature range. It is assumed that temperatures outside that range
     /// don't change much on the consumption in the climate of southern Sweden.
     ///
-    /// Output varies between MAX_AVG_LOAD and MIN_AVG_LOAD
+    /// Output varies between max_avg_load and min_avg_load
     ///
     /// # Arguments
     ///

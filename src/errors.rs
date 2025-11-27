@@ -16,6 +16,8 @@ pub enum SplineError {
     ControlPoint,
 }
 
+/// Error depicting errors that occur while managing forecasts
+/// 
 #[derive(Debug, Error)]
 #[error("ForecastValuesError: {0}")]
 pub enum ForecastValuesError {

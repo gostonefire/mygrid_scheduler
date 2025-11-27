@@ -1,4 +1,3 @@
-use std::{thread};
 use rayon::ThreadPoolBuilder;
 use anyhow::Result;
 use log::error;

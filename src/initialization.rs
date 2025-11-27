@@ -21,8 +21,7 @@ pub struct Mgr {
     pub schedule: Schedule,
 }
 
-/// Initializes and returns configuration, a Mgr struct holding various of initialized structs, 
-/// an optional LastCharge struct, and an optional active block
+/// Initializes and returns configuration and a Mgr struct holding various of initialized structs
 ///
 pub fn init() -> Result<(Config, Mgr)> {
     let args: Vec<String> = env::args().collect();
