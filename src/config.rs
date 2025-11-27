@@ -2,6 +2,7 @@ use std::fs;
 use log::LevelFilter;
 use serde::Deserialize;
 use anyhow::Result;
+use chrono::{DateTime, Local};
 
 #[derive(Deserialize)]
 pub struct GeoRef {
@@ -92,6 +93,7 @@ pub struct Files {
 
 #[derive(Deserialize)]
 pub struct General {
+    pub local_run_time: Option<DateTime<Local>>,
     pub log_path: String,
     pub log_level: LevelFilter,
     pub log_to_stdout: bool,

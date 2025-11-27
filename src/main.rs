@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     };
 
     // Create a new schedule
-    match run(&mut mgr, &config.files) {
+    match run(&mut mgr, &config.files, config.general.local_run_time) {
         Ok(_) => {
             mgr.mail.send_mail("Report".into(), "Successfully created new schedule".into())?;
         },

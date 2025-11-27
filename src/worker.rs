@@ -15,12 +15,15 @@ use crate::scheduler::Block;
 ///
 /// * 'mgr' - struct with configured managers
 /// * 'files' - files config
-pub fn run(mgr: &mut Mgr, files: &Files) -> anyhow::Result<()> {
-    // let run_start = DateTime::parse_from_rfc3339("2025-11-26T15:39:28.721902500+01:00")?.with_timezone(&Local);
+pub fn run(mgr: &mut Mgr, files: &Files, local_run_time: Option<DateTime<Local>>) -> anyhow::Result<()> {
 
+    // If a run time is given, use that. Otherwise, use the current time.
+    let run_start = if let Some(run_start) = local_run_time {
+        run_start
+    } else {
+        Local::now()
+    };
 
-    // The run start is always assumed to be at call of this function
-    let run_start = Local::now();
     let run_schema = get_schedule_start_schema(run_start)?;
 
     info!("Run start: {}, Schedule Start: {}", run_schema.run_start, run_schema.schedule_start);
