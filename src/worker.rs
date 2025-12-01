@@ -15,10 +15,12 @@ use crate::scheduler::Block;
 ///
 /// * 'mgr' - struct with configured managers
 /// * 'files' - files config
-pub fn run(mgr: &mut Mgr, files: &Files, local_run_time: Option<DateTime<Local>>) -> anyhow::Result<()> {
+/// * 'debug_run_time' - a run start date and time to be used instead of Local now
+/// * 'debug_soc_in' - a soc in to be used instead of whatever is calculated
+pub fn run(mgr: &mut Mgr, files: &Files, debug_run_time: Option<DateTime<Local>>, debug_soc_in: Option<u8>) -> anyhow::Result<()> {
 
     // If a run time is given, use that. Otherwise, use the current time.
-    let run_start = if let Some(run_start) = local_run_time {
+    let run_start = if let Some(run_start) = debug_run_time {
         run_start
     } else {
         Local::now()
@@ -29,7 +31,11 @@ pub fn run(mgr: &mut Mgr, files: &Files, local_run_time: Option<DateTime<Local>>
     info!("Run start: {}, Schedule Start: {}", run_schema.run_start, run_schema.schedule_start);
 
     // Estimate how much battery capacity we lose between the run start and the schedule start
-    let start_soc = estimate_soc_in(mgr, &run_schema)?;
+    let start_soc = if let Some(soc_in) = debug_soc_in {
+        soc_in
+    } else {
+        estimate_soc_in(mgr, &run_schema)?
+    };
 
     // Calculate the new schedule
     let base_data = get_schedule(mgr, start_soc, &run_schema)?;

@@ -93,7 +93,8 @@ pub struct Files {
 
 #[derive(Deserialize)]
 pub struct General {
-    pub local_run_time: Option<DateTime<Local>>,
+    pub debug_run_time: Option<DateTime<Local>>,
+    pub debug_soc_in: Option<u8>,
     pub log_path: String,
     pub log_level: LevelFilter,
     pub log_to_stdout: bool,
