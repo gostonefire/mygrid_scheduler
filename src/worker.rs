@@ -120,7 +120,7 @@ fn get_schedule(mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> anyhow::Re
     mgr.schedule.update_scheduling(&tariffs, &production.data, &consumption.data, soc_in, run_schema.schedule_start, run_schema.schedule_length);
 
     let base_data = BaseData {
-        date_time: run_schema.schedule_start,
+        date_time: run_schema.schedule_day_start,
         base_cost: mgr.schedule.base_cost,
         schedule_cost: mgr.schedule.total_cost,
         production: MinuteValues::new(pv_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
