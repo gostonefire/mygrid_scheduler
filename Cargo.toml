@@ -1,13 +1,13 @@
 [package]
 name = "mygrid_scheduler"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 
 [dependencies]
 chrono = "0.4"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-serde_with = { version = "3.15", features = ["chrono"] }
+serde_with = { version = "3.16", features = ["chrono"] }
 rayon = "1.11"
 ureq = "3.1"
 spa_sra = {version = "0.3", features = ["chrono_0_4"]}
