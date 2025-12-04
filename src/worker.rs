@@ -150,7 +150,6 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> anyhow::Result<RunSc
     } else {
         run_start.add(TimeDelta::days(1)).duration_trunc(TimeDelta::days(1))?.duration_trunc(TimeDelta::days(1))?
     };
-    dbg!(schedule_start);
 
     let run_start_utc = run_start.with_timezone(&Utc);
     let run_day_start_utc = run_start.duration_trunc(TimeDelta::days(1))?.with_timezone(&Utc);
