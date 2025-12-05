@@ -148,7 +148,7 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> anyhow::Result<RunSc
     let schedule_start = if run_start.hour() < 21 || run_start.hour() * 60 + run_start.minute() >= 1395 {
         run_start.add(TimeDelta::hours(1)).duration_trunc(TimeDelta::minutes(15))?
     } else {
-        run_start.add(TimeDelta::days(1)).duration_trunc(TimeDelta::days(1))?.duration_trunc(TimeDelta::days(1))?
+        run_start.with_hour(12).unwrap().add(TimeDelta::days(1)).duration_trunc(TimeDelta::hours(1))?.with_hour(0).unwrap()
     };
 
     let run_start_utc = run_start.with_timezone(&Utc);
