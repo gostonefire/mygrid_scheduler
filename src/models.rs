@@ -18,6 +18,12 @@ pub struct BaseData {
     pub tariffs: Vec<TariffValue>,
 }
 
+pub struct PreformattedData {
+    pub tariffs: Vec<f64>,
+    pub cons: Vec<f64>,
+    pub net_prod: Vec<f64>,
+}
+
 #[derive(Serialize, Debug)]
 pub struct TariffValue {
     pub valid_time: DateTime<Utc>,

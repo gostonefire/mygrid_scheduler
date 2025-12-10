@@ -9,7 +9,6 @@ use crate::manager_fox_cloud::Fox;
 use crate::manager_mail::Mail;
 use crate::manager_nordpool::NordPool;
 use crate::manager_production::PVProduction;
-use crate::scheduler::Schedule;
 
 pub struct Mgr {
     pub fox: Fox,
@@ -18,7 +17,6 @@ pub struct Mgr {
     pub pv: PVProduction,
     pub cons: Consumption,
     pub mail: Mail,
-    pub schedule: Schedule,
 }
 
 /// Initializes and returns configuration and a Mgr struct holding various of initialized structs
@@ -52,7 +50,6 @@ pub fn init() -> Result<(Config, Mgr)> {
     let pv = PVProduction::new(&config.production, config.geo_ref.lat, config.geo_ref.long);
     let cons = Consumption::new(&config.consumption);
     let mail = Mail::new(&config.mail)?;
-    let schedule = Schedule::new(&config, None);
 
     let mgr = Mgr {
         fox,
@@ -61,7 +58,6 @@ pub fn init() -> Result<(Config, Mgr)> {
         pv,
         cons,
         mail,
-        schedule,
     };
  
     Ok((config, mgr))

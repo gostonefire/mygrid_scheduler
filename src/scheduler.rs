@@ -3,17 +3,10 @@ use std::fmt;
 use std::fmt::Formatter;
 use chrono::{DateTime, DurationRound, TimeDelta, Timelike, Utc};
 use serde::{Deserialize, Serialize};
-use crate::models::{TimeValue, TariffValue};
+use crate::models::{TimeValue, TariffValue, PreformattedData};
 use rayon::prelude::*;
 use crate::config::Config;
 
-const TIME_BLOCKS: usize = 96;
-
-#[derive(Debug)]
-pub struct Tariffs {
-    pub buy: [f64;TIME_BLOCKS],
-    pub length: usize,
-}
 
 /// Available block types
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
@@ -120,16 +113,21 @@ struct PeriodMetrics {
     cost: f64,
 }
 
-/// Struct representing the block schedule from the current hour and forward
-pub struct Schedule {
+pub struct SchedulerResult {
+    pub base_cost: f64,
+    pub total_cost: f64,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
     pub blocks: Vec<Block>,
-    pub tariffs: Tariffs,
-    pub total_cost: f64,
-    pub base_cost: f64,
-    net_prod: [f64;TIME_BLOCKS],
-    cons: [f64;TIME_BLOCKS],
+}
+
+/// Struct representing the block schedule from the current hour and forward
+pub struct Schedule<'a> {
+    tariffs: &'a[f64],
+    base_cost: f64,
+    net_prod: &'a[f64],
+    cons: &'a[f64],
+    schedule_length: usize,
     bat_kwh: f64,
     soc_kwh: f64,
     charge_kwh_instance: f64,
@@ -138,26 +136,19 @@ pub struct Schedule {
     min_saving: f64,
 }
 
-impl Schedule {
+impl<'a> Schedule<'a> {
     /// Creates a new Schedule without scheduling
     ///
     /// # Arguments
     ///
     /// * 'config' - configuration struct
-    /// * 'schedule_blocks' - any existing schedule blocks
-    pub fn new(config: &Config, schedule_blocks: Option<Vec<Block>>) -> Schedule {
+    pub fn new(config: &Config) -> Schedule<'_> {
         Schedule {
-            start_time: Default::default(),
-            end_time: Default::default(),
-            blocks: schedule_blocks.unwrap_or(Vec::new()),
-            tariffs: Tariffs {
-                buy: [0.0; TIME_BLOCKS],
-                length: 0,
-            },
-            total_cost: 0.0,
+            tariffs: &[0.0],
             base_cost: 0.0,
-            net_prod: [0.0; TIME_BLOCKS],
-            cons: [0.0; TIME_BLOCKS],
+            net_prod: &[0.0],
+            cons: &[0.0],
+            schedule_length: 0,
             bat_kwh: config.charge.bat_kwh,
             soc_kwh: config.charge.soc_kwh,
             charge_kwh_instance: config.charge.charge_kwh_hour,
@@ -167,56 +158,80 @@ impl Schedule {
         }
     }
 
-    /// Returns configured kwh per SoC unit
-    /// 
-    pub fn get_soc_kwh(&self) -> f64 {
-        self.soc_kwh
-    }
-    
-    /// Updates scheduling based on tariffs, production and consumption estimates.
-    /// It can also base the schedule on any residual charge (stated as soc).
+    /// Preformats data for scheduling. It returns a struct of vectors with aligned data between them.
+    /// The preformatting is necessary in able for the scheduling algorithm to take variable length
+    /// slices instead of static arrays. I.e., the vectors must survive the lifetime of the slices.
     ///
     /// # Arguments
     ///
     /// * 'tariffs' - tariffs as given from NordPool
     /// * 'production' - production estimates per quarter
     /// * 'consumption' - consumption estimates per quarter
-    /// * 'soc_in' - any residual charge to bear in to the new schedule (stated as soc 0-100)
-    /// * 'date_time' - the date time when the schedule shall start
-    /// * 'schedule_length' - the length of the schedule to create in minutes
-    pub fn update_scheduling(&mut self, tariffs: &Vec<TariffValue>, production: &Vec<TimeValue>, consumption: &Vec<TimeValue>, soc_in: u8, date_time: DateTime<Utc>, schedule_length: i64) {
-        let start_time = date_time.duration_trunc(TimeDelta::minutes(15)).unwrap();
-        let end_time = date_time.add(TimeDelta::minutes(schedule_length));
-        let tariffs_in_scope: Vec<(f64, f64)> = tariffs.iter()
+    /// * 'start_time' - the date time when the schedule shall start (truncated to minutes)
+    /// * 'end_time' - the date time when the schedule shall end (truncated to minutes, non-inclusive)
+    pub fn preformat_data(
+        tariffs: &Vec<TariffValue>,
+        production: &Vec<TimeValue>,
+        consumption: &Vec<TimeValue>,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>) -> PreformattedData
+    {
+        let tariffs_in_scope: Vec<f64> = tariffs.iter()
             .filter(|t| t.valid_time >= start_time && t.valid_time < end_time)
-            .map(|t| (t.buy, t.sell))
-            .collect::<Vec<(f64, f64)>>();
-        
-        let mut prod: [f64; TIME_BLOCKS] = [0.0; TIME_BLOCKS];
+            .map(|t| t.buy)
+            .collect::<Vec<f64>>();
+
+        let mut prod: Vec<f64> = Vec::with_capacity(24);
         production.iter()
             .filter(|p| p.valid_time >= start_time && p.valid_time < end_time)
-            .enumerate()
-            .for_each(|(i, p)| prod[i] = p.data / 1000.0);
+            .for_each(|p| prod.push(p.data / 1000.0));
 
+        let mut cons: Vec<f64> = Vec::with_capacity(24);
         consumption.iter()
             .filter(|c| c.valid_time >= start_time && c.valid_time < end_time)
-            .enumerate()
-            .for_each(|(i, p)| self.cons[i] = p.data / 1000.0);
+            .for_each(|p| cons.push(p.data / 1000.0));
 
+        let mut net_prod: Vec<f64> = Vec::with_capacity(24);
         prod.iter()
             .enumerate()
-            .for_each(|(i, &p)| self.net_prod[i] = p - self.cons[i]);
+            .for_each(|(i, &p)| net_prod.push(p - cons[i]));
 
+        PreformattedData {
+            tariffs: tariffs_in_scope,
+            cons,
+            net_prod,
+        }
+    }
+
+
+    /// Updates scheduling based on tariffs, production and consumption estimates.
+    /// It can also base the schedule on any residual charge (stated as soc).
+    ///
+    /// # Arguments
+    ///
+    /// * 'tariffs' - tariffs as given from NordPool
+    /// * 'cons' - consumption estimates per quarter
+    /// * 'soc_in' - any residual charge to bear in to the new schedule (stated as soc 0-100)
+    /// * 'net_prod' - net production estimates per quarter (production - consumption)
+    /// * 'start_time' - the date time when the schedule shall start
+    pub fn update_scheduling(&mut self, tariffs: &'a[f64], cons: &'a[f64], net_prod: &'a[f64], soc_in: u8, start_time: DateTime<Utc>) -> SchedulerResult {
         let charge_in = (soc_in.max(10) - 10) as f64 * self.soc_kwh;
 
-        self.tariffs = self.transform_tariffs(&tariffs_in_scope);
+        self.tariffs = tariffs;
+        self.cons = cons;
+        self.net_prod = net_prod;
+        self.schedule_length = tariffs.len();
+
         let block_collection = self.parallel_search(charge_in);
-        self.blocks = create_result_blocks(block_collection.blocks, self.soc_kwh, start_time);
-        self.total_cost = block_collection.total_cost;
-        self.start_time = start_time;
-        self.end_time = self.blocks.last()
-            .expect("should exist at least the base block")
-            .end_time.add(TimeDelta::minutes(15));
+        let blocks = create_result_blocks(block_collection.blocks, self.soc_kwh, start_time);
+
+        SchedulerResult {
+            base_cost: self.base_cost,
+            total_cost: block_collection.total_cost,
+            start_time,
+            end_time: blocks.last().expect("should exist at least the base block").end_time.add(TimeDelta::minutes(15)),
+            blocks,
+        }
     }
 
     /// Function to break up the scheduling process over parallel threads
@@ -228,7 +243,7 @@ impl Schedule {
         let mut best_record: BlockCollection = self.create_base_block_collection(charge_in);
         let base_record = best_record.clone();
 
-        let bcs = (0..self.tariffs.length).into_par_iter()
+        let bcs = (0..self.schedule_length).into_par_iter()
             .map(|seek_first_charge| self.seek_best(charge_in, seek_first_charge, best_record.clone()))
             .collect::<Vec<BlockCollection>>();
 
@@ -266,19 +281,19 @@ impl Schedule {
         for charge_level_first in (0..=90).step_by(5) {
             quad[0] = self.seek_charge(0, seek_first_charge, charge_level_first, charge_in);
 
-            for seek_first_use in quad[0].next_start..self.tariffs.length {
-                for use_end_first in seek_first_use..=self.tariffs.length {
+            for seek_first_use in quad[0].next_start..self.schedule_length {
+                for use_end_first in seek_first_use..=self.schedule_length {
                     if let Some(first_use_collection) = self.seek_use(quad[0].next_start, seek_first_use, use_end_first, quad[0].next_charge_in) {
                         quad[1] = first_use_collection;
 
                         best_record = self.record_best_collection(&quad[0..2], best_record);
 
-                        for seek_second_charge in quad[1].next_start..self.tariffs.length {
+                        for seek_second_charge in quad[1].next_start..self.schedule_length {
                             for charge_level_second in (0..=90).step_by(5) {
                                 quad[2] = self.seek_charge(quad[1].next_start, seek_second_charge, charge_level_second, quad[1].next_charge_in);
 
-                                for seek_second_use in quad[2].next_start..self.tariffs.length {
-                                    if let Some(second_use_blocks) = self.seek_use(quad[2].next_start, seek_second_use, self.tariffs.length, quad[2].next_charge_in) {
+                                for seek_second_use in quad[2].next_start..self.schedule_length {
+                                    if let Some(second_use_blocks) = self.seek_use(quad[2].next_start, seek_second_use, self.schedule_length, quad[2].next_charge_in) {
                                         quad[3] = second_use_blocks;
                                         best_record = self.record_best_collection(&quad, best_record);
                                     }
@@ -300,12 +315,12 @@ impl Schedule {
     ///
     /// * 'charge_in' - residual charge from the previous block
     fn create_base_block_collection(&mut self, charge_in: f64) -> BlockCollection {
-        let pm = self.update_for_pv(BlockType::Use, 0, self.tariffs.length, charge_in);
+        let pm = self.update_for_pv(BlockType::Use, 0, self.schedule_length, charge_in);
         let block = self.get_none_charge_block(&pm);
         self.base_cost = (block.cost * 100.0).round() / 100.0;
         
         BlockCollection {
-            next_start: self.tariffs.length,
+            next_start: self.schedule_length,
             next_charge_in: block.charge_out,
             total_cost: self.base_cost,
             blocks: vec![block],
@@ -334,7 +349,7 @@ impl Schedule {
 
         let need = (soc_level as f64 * self.soc_kwh - pm_hold.charge_out) / self.charge_efficiency;
         if need > 0.0 {
-            let (c_cost, end) = self.charge_cost_charge_end(start, need, None);
+            let (c_cost, end) = self.charge_cost_charge_end(start, need);
             let pm_charge = self.update_for_pv(BlockType::Charge, start, end, 0.0);
 
             next_start += end - start;
@@ -361,23 +376,16 @@ impl Schedule {
     ///
     /// * 'start' - start instance for charging from grid
     /// * 'charge' - charge in kWh
-    /// * 'tariffs' - optional tariffs to use instead of the registered one in the Schedule struct
-    fn charge_cost_charge_end(&self, start: usize, charge: f64, tariffs: Option<&Tariffs>) -> (f64, usize) {
+    fn charge_cost_charge_end(&self, start: usize, charge: f64) -> (f64, usize) {
         let mut instance_charge: Vec<f64> = Vec::new();
         let rem = charge % self.charge_kwh_instance;
-
-        let use_tariffs = if let Some(tariffs) = tariffs {
-            tariffs
-        } else {
-            &self.tariffs
-        };
 
         (0..(charge / self.charge_kwh_instance) as usize).for_each(|_| instance_charge.push(self.charge_kwh_instance));
         if (rem * 10.0).round() as usize != 0 {
             instance_charge.push(rem);
         }
-        let end = (start + instance_charge.len()).min(use_tariffs.length);
-        let c_price = use_tariffs.buy[start..end].iter()
+        let end = (start + instance_charge.len()).min(self.schedule_length);
+        let c_price = self.tariffs[start..end].iter()
             .enumerate()
             .map(|(i, t)| instance_charge[i] * t)
             .sum::<f64>();
@@ -477,7 +485,7 @@ impl Schedule {
         if block_type == BlockType::Charge {
             pm.cost = self.cons[start..end].iter()
                 .enumerate()
-                .map(|(i, &c)| self.tariffs.buy[i + start] * c)
+                .map(|(i, &c)| self.tariffs[i + start] * c)
                 .sum::<f64>();
         } else {
             self.net_prod[start..end].iter()
@@ -509,7 +517,7 @@ impl Schedule {
             // If the net adding is negative, we need to buy energy from the grid and also revert
             // the efficiency previously added for drawing power from the battery.
             // Charge out from the time instance will be whatever hold level is set.
-            pm.cost += self.tariffs.buy[np_idx] * (pm.hold_level - net_add) * efficiency;
+            pm.cost += self.tariffs[np_idx] * (pm.hold_level - net_add) * efficiency;
             pm.charge_out = pm.hold_level;
         } else {
             // If the net adding is positive, we check whether the battery is full and thus will
@@ -518,22 +526,6 @@ impl Schedule {
             // on whether the battery is full or not.
             pm.charge_out = net_add.min(self.bat_kwh);
         }
-    }
-
-    /// Prepares tariffs for offset management
-    ///
-    /// # Arguments
-    ///
-    /// * 'tariffs' - hourly prices from NordPool (excl VAT)
-    fn transform_tariffs(&self, tariffs: &Vec<(f64, f64)>) -> Tariffs {
-        let mut buy: [f64; TIME_BLOCKS] = [0.0; TIME_BLOCKS];
-        tariffs.iter()
-            .enumerate()
-            .for_each(|(i, &t)| {
-                buy[i] = t.0;
-            });
-
-        Tariffs { buy, length: tariffs.len() }
     }
 
     /// Returns the best block collection compared between the latest results and the stored best
@@ -549,8 +541,8 @@ impl Schedule {
         let mut pm: Option<PeriodMetrics> = None;
         let mut num_blocks: usize = 0;
 
-        if quad[quad_last].next_start < self.tariffs.length {
-            let pm_hold = self.update_for_pv(BlockType::Hold, quad[quad_last].next_start, self.tariffs.length, quad[quad_last].next_charge_in);
+        if quad[quad_last].next_start < self.schedule_length {
+            let pm_hold = self.update_for_pv(BlockType::Hold, quad[quad_last].next_start, self.schedule_length, quad[quad_last].next_charge_in);
             total_cost += pm_hold.cost;
             next_charge_in = pm_hold.charge_out;
             pm = Some(pm_hold);
@@ -560,11 +552,11 @@ impl Schedule {
         total_cost = (total_cost * 100.0).round() / 100.0;
 
         if total_cost < best_blocks.total_cost {
-            self.collect_blocks(quad, self.tariffs.length, next_charge_in, total_cost, pm)
+            self.collect_blocks(quad, self.schedule_length, next_charge_in, total_cost, pm)
         } else if total_cost == best_blocks.total_cost {
             num_blocks += quad.iter().map(|b| b.blocks.len()).sum::<usize>();
             if num_blocks < best_blocks.blocks.len() {
-                self.collect_blocks(quad, self.tariffs.length, next_charge_in, total_cost, pm)
+                self.collect_blocks(quad, self.schedule_length, next_charge_in, total_cost, pm)
             } else {
                 best_blocks
             }

@@ -3,21 +3,22 @@ use std::ops::Add;
 use chrono::{DateTime, Duration, DurationRound, Local, NaiveDate, NaiveDateTime, TimeDelta, Timelike, Utc};
 use glob::glob;
 use log::info;
-use crate::config::Files;
+use crate::config::{Config, Files};
 use crate::initialization::Mgr;
 use crate::models::{BaseData, MinuteValues};
 use crate::{retry, wrapper};
-use crate::scheduler::Block;
+use crate::scheduler::{Block, Schedule, SchedulerResult};
 
 /// Runs a schedule creation process
 ///
 /// # Arguments
 ///
+/// * 'config' - configuration
 /// * 'mgr' - struct with configured managers
 /// * 'files' - files config
 /// * 'debug_run_time' - a run start date and time to be used instead of Local now
 /// * 'debug_soc_in' - a soc in to be used instead of whatever is calculated
-pub fn run(mgr: &mut Mgr, files: &Files, debug_run_time: Option<DateTime<Local>>, debug_soc_in: Option<u8>) -> anyhow::Result<()> {
+pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option<DateTime<Local>>, debug_soc_in: Option<u8>) -> anyhow::Result<()> {
 
     // If a run time is given, use that. Otherwise, use the current time.
     let run_start = if let Some(run_start) = debug_run_time {
@@ -34,18 +35,18 @@ pub fn run(mgr: &mut Mgr, files: &Files, debug_run_time: Option<DateTime<Local>>
     let start_soc = if let Some(soc_in) = debug_soc_in {
         soc_in
     } else {
-        estimate_soc_in(mgr, &run_schema)?
+        estimate_soc_in(mgr, &run_schema, config.charge.soc_kwh)?
     };
 
     // Calculate the new schedule
-    let base_data = get_schedule(mgr, start_soc, &run_schema)?;
+    let (scheduler_result, base_data) = get_schedule(&config, mgr, start_soc, &run_schema)?;
 
-    info!("Base Cost: {}, Schedule Cost: {}", mgr.schedule.base_cost, mgr.schedule.total_cost);
-    for b in mgr.schedule.blocks.iter() {
+    info!("Base Cost: {}, Schedule Cost: {}", scheduler_result.base_cost, scheduler_result.total_cost);
+    for b in scheduler_result.blocks.iter() {
         info!("{}", b);
     }
 
-    save_schedule(&files.schedule_dir, mgr.schedule.start_time, mgr.schedule.end_time, &mgr.schedule.blocks)?;
+    save_schedule(&files.schedule_dir, scheduler_result.start_time, scheduler_result.end_time, &scheduler_result.blocks)?;
     save_base_data(&files.base_data_dir, &base_data)?;
 
     Ok(())
@@ -57,7 +58,8 @@ pub fn run(mgr: &mut Mgr, files: &Files, debug_run_time: Option<DateTime<Local>>
 ///
 /// * 'mgr' - struct with managers
 /// * 'run_schema' - a schema with a schedule for running the scheduler, and time converted to Utc
-fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema) -> anyhow::Result<u8> {
+/// * 'soc_kwh' - kwh per soc unit
+fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> anyhow::Result<u8> {
     // Get the current state of charge from Fox Cloud
     let soc_in = retry!(||mgr.fox.get_current_soc())?;
 
@@ -96,7 +98,7 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema) -> anyhow::Result<u8> 
 
     // Calculate the expected SoC at the start of the schedule.
     // 10% is the lowest SoC that the battery accepts; anything below is considered 10%
-    let start_soc = (soc_in as i8 + (power_used / mgr.schedule.get_soc_kwh()) as i8).max(10) as u8;
+    let start_soc = (soc_in as i8 + (power_used / soc_kwh) as i8).max(10) as u8;
     info!("Soc In: {}, Start SoC: {}, Power Used: {}, Minutes: {}", soc_in, start_soc, power_used, minutes);
     Ok(start_soc)
 }
@@ -105,10 +107,11 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema) -> anyhow::Result<u8> 
 ///
 /// # Arguments
 ///
+/// * 'config' - configuration
 /// * 'mgr' - struct with managers
 /// * 'soc_in' - state of battery charge when going in to the schedule
 /// * 'run_schema' - a schema with a schedule for running the scheduler, and time converted to Utc
-fn get_schedule(mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> anyhow::Result<BaseData> {
+fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> anyhow::Result<(SchedulerResult, BaseData)> {
     let forecast = retry!(||mgr.forecast.new_forecast(run_schema.schedule_day_start, run_schema.schedule_day_end))?;
     let pv_estimate = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_date)?;
     let cons_estimate = mgr.cons.estimate(&forecast, run_schema.local_offset)?;
@@ -117,19 +120,21 @@ fn get_schedule(mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> anyhow::Re
     let consumption = MinuteValues::new(cons_estimate, run_schema.schedule_day_start).time_groups(15, true);
     let tariffs = retry!(||mgr.nordpool.get_tariffs(run_schema.schedule_day_start, run_schema.schedule_date))?;
 
-    mgr.schedule.update_scheduling(&tariffs, &production.data, &consumption.data, soc_in, run_schema.schedule_start, run_schema.schedule_length);
+    let mut scheduler = Schedule::new(config);
+    let pd = Schedule::preformat_data(&tariffs, &production.data, &consumption.data, run_schema.schedule_start, run_schema.schedule_day_end);
+    let sr = scheduler.update_scheduling(&pd.tariffs, &pd.cons, &pd.net_prod, soc_in, run_schema.schedule_start);
 
     let base_data = BaseData {
         date_time: run_schema.schedule_day_start,
-        base_cost: mgr.schedule.base_cost,
-        schedule_cost: mgr.schedule.total_cost,
+        base_cost: sr.base_cost,
+        schedule_cost: sr.total_cost,
         production: MinuteValues::new(pv_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
         consumption: MinuteValues::new(cons_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
         forecast: forecast.forecast,
         tariffs,
     };
 
-    Ok(base_data)
+    Ok((sr, base_data))
 }
 
 /// Creates a run schema to be used to calculate the SoC at the time of schedule start
@@ -161,8 +166,6 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> anyhow::Result<RunSc
     let schedule_day_end_utc = schedule_day_start_utc.add(TimeDelta::days(1));
     let schedule_date_naive = schedule_start.date_naive();
 
-    let schedule_length = 24 * 60 - (schedule_start_utc - schedule_day_start_utc).num_minutes();
-
     // Calculate the time span between the run start and the schedule start
     // This can involve one or two days, depending on whether the run start falls into the same day as the schedule start
     let mut run_date_1: RunMinutes = RunMinutes {
@@ -189,7 +192,6 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> anyhow::Result<RunSc
         schedule_day_start: schedule_day_start_utc,
         schedule_day_end: schedule_day_end_utc,
         schedule_date: schedule_date_naive,
-        schedule_length,
         local_offset: run_start.offset().local_minus_utc() as i64,
         run_date_1,
         run_date_2,
@@ -275,7 +277,6 @@ struct RunSchema {
     schedule_day_start: DateTime<Utc>,
     schedule_day_end: DateTime<Utc>,   // Non-Inclusive
     schedule_date: NaiveDate,
-    schedule_length: i64,
     local_offset: i64,
     run_date_1: RunMinutes,
     run_date_2: Option<RunMinutes>,
