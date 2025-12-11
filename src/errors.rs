@@ -23,6 +23,4 @@ pub enum SplineError {
 pub enum ForecastValuesError {
     #[error("forecast values are empty")]
     EmptyForecastValues,
-    #[error("forecast values length does not equal 24")]
-    WrongForecastLength,
 }

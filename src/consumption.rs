@@ -3,7 +3,6 @@ use chrono::{Datelike, TimeDelta, Timelike};
 use anyhow::Result;
 use crate::config::ConsumptionParameters;
 use crate::models::ForecastValues;
-use crate::errors::ForecastValuesError;
 use crate::spline::MonotonicCubicSpline;
 
 
@@ -52,10 +51,9 @@ impl Consumption {
     ///
     /// * 'forecast' - the temperature forecast
     /// * 'local_offset' - current offset between Utc and Local in seconds
-    pub fn estimate(&self, forecast: &ForecastValues, local_offset: i64) -> Result<[f64;1440]> {
-        if forecast.forecast.len() != 24 { Err(ForecastValuesError::WrongForecastLength)? }
-
-        let mut p: [f64;1440] = [0.0;1440];
+    pub fn estimate(&self, forecast: &ForecastValues, local_offset: i64) -> Result<Vec<f64>> {
+        let minutes = forecast.forecast.len() * 60;
+        let mut p: Vec<f64> = vec![0.0;minutes];
         let mut minute_index = 0usize;
 
         for v in forecast.forecast.iter() {

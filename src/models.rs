@@ -43,9 +43,9 @@ pub struct TimeValues {
     _marker: PhantomData<bool>,
 }
 
-pub struct MinuteValues {
+pub struct MinuteValues<'a> {
     pub date_time: DateTime<Utc>,
-    pub data: [f64;1440],
+    pub data: &'a [f64],
 }
 
 #[derive(Serialize, Debug)]
@@ -64,7 +64,7 @@ pub struct ForecastValues {
 }
 
 
-impl MinuteValues {
+impl MinuteValues<'_> {
 
     /// Creates a new MinuteValues
     /// 
@@ -72,7 +72,7 @@ impl MinuteValues {
     /// 
     /// * 'data' - a day worth of data per minute
     /// * 'date_time' - the date and time the data starts with
-    pub fn new(data: [f64;1440], date_time: DateTime<Utc>) -> MinuteValues {
+    pub fn new(data: &[f64], date_time: DateTime<Utc>) -> MinuteValues<'_> {
         MinuteValues {data, date_time}
     }
 
@@ -133,8 +133,9 @@ impl ForecastValues {
     ///
     /// # Arguments
     ///
+    /// * 'minutes' - number of minutes to interpolate from the first forecast value
     /// * 'y_fn' - a function that picks out whatever attribute to use from the forecast
-    pub fn minute_values(&self, y_fn: fn(&ForecastValue) -> f64) -> Result<[f64;1440]> {
+    pub fn minute_values(&self, minutes: usize, y_fn: fn(&ForecastValue) -> f64) -> Result<Vec<f64>> {
         let base_minute = self.forecast.first().ok_or(ForecastValuesError::EmptyForecastValues)?.valid_time.timestamp() / 60;
         
         let xy = self.forecast
@@ -143,10 +144,8 @@ impl ForecastValues {
             .collect::<Vec<(f64, f64)>>();
         let (x, y): (Vec<f64>, Vec<f64>) = xy.into_iter().unzip();
         let s = MonotonicCubicSpline::new(&x, &y)?;
-        let mut temp = [0.0; 1440];
-        temp.iter_mut().enumerate().for_each(|(i, t)| {
-            *t = s.interpolate(i as f64);
-        });
+        let mut temp = Vec::with_capacity(minutes);
+        (0..minutes).for_each(|i| temp.push(s.interpolate(i as f64)));
 
         Ok(temp)
     }

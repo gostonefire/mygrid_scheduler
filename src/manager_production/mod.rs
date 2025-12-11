@@ -59,11 +59,13 @@ impl PVProduction {
     ///
     /// * 'forecast' - a vector of hourly weather forecasts
     /// * 'day_start' - the start time of the day to calculate for
+    /// * 'day_end' - the end time of the day to calculate for (non-inclusive)
     /// * 'day_date' - the date to calculate for
-    pub fn estimate(&self, forecast: &ForecastValues, day_start: DateTime<Utc>, day_date: NaiveDate) -> Result<[f64;1440]> {
-        let temp = forecast.minute_values(|f| f.temp)?;
-        let cloud_factor = forecast.minute_values(|f| f.cloud_factor)?;
-        let power_per_minute = self.day_power(day_start, day_date, temp, cloud_factor)?;
+    pub fn estimate(&self, forecast: &ForecastValues, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate) -> Result<Vec<f64>> {
+        let minutes = (day_end - day_start).num_minutes() as usize;
+        let temp = forecast.minute_values(minutes, |f| f.temp)?;
+        let cloud_factor = forecast.minute_values(minutes, |f| f.cloud_factor)?;
+        let power_per_minute = self.day_power(day_start, day_end, day_date, &temp, &cloud_factor)?;
         
         Ok(power_per_minute)
     }
@@ -73,15 +75,17 @@ impl PVProduction {
     /// # Arguments
     ///
     /// * 'day_start' - the start time of the day to calculate for
+    /// * 'day_end' - the end time of the day to calculate for (non-inclusive)
     /// * 'day_date' - date to calculate for
     /// * 'temp' - ambient temperature in degrees Celsius
-    fn day_power(&self, day_start: DateTime<Utc>, day_date: NaiveDate, temp: [f64;1440], cloud_factor: [f64;1440]) -> Result<[f64;1440]> {
-        let mut power: [f64;1440] = [0.0;1440];
-        let sp = self.solar_positions(day_start, day_date)?;
+    fn day_power(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate, temp: &[f64], cloud_factor: &[f64]) -> Result<Vec<f64>> {
+        let minutes = (day_end - day_start).num_minutes() as usize;
+        let mut power: Vec<f64> = vec![0.0;minutes];
+        let sp = self.solar_positions(day_start, day_end, day_date)?;
         let sun_intensity_factor = sun_intensity_factor(&sp.zenith);
         let (up, down) = self.full_sun_minute(&sp);
-        let roof_temperature_east: [f64;1440] = self.roof_temperature(Some(up), &temp, &sp.incidence_east, &sun_intensity_factor)?;
-        let roof_temperature_west: [f64;1440] = self.roof_temperature(Some(up), &temp, &sp.incidence_west, &sun_intensity_factor)?;
+        let roof_temperature_east: Vec<f64> = self.roof_temperature(Some(up), &temp, &sp.incidence_east, &sun_intensity_factor)?;
+        let roof_temperature_west: Vec<f64> = self.roof_temperature(Some(up), &temp, &sp.incidence_west, &sun_intensity_factor)?;
 
         // Loop through the day with a one-minute incrementation
         for minute_of_day in sp.sunrise..sp.sunset {
@@ -118,8 +122,10 @@ impl PVProduction {
     /// # Arguments
     ///
     /// * 'day_start' - the start time of the day to calculate for
+    /// * 'day_end' - the end time of the day to calculate for (non-inclusive)
     /// * 'day_date' - the date on which sunrise and sunset occur
-    fn solar_positions(&self, day_start: DateTime<Utc>, day_date: NaiveDate) -> Result<SolarPositions, SpaError> {
+    fn solar_positions(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate) -> Result<SolarPositions, SpaError> {
+        let minutes = (day_end - day_start).num_minutes() as usize;
         let day_date_utc = TimeZone::from_utc_datetime(&Utc, &day_date.and_hms_opt(0,0,0).unwrap());
         let mut input = Input::from_date_time(day_date_utc);
         input.latitude = self.lat;
@@ -139,13 +145,13 @@ impl PVProduction {
 
         spa.input.function = Function::SpaZaInc;
 
-        let mut incidence_east: [f64;1440] = [90.0; 1440];
-        let mut incidence_west: [f64;1440] = [90.0; 1440];
-        let mut zenith: [f64;1440] = [90.0; 1440];
-        let mut azimuth: [f64;1440] = [0.0; 1440];
-        let mut elevation: [f64;1440] = [0.0; 1440];
+        let mut incidence_east: Vec<f64> = vec![90.0; minutes];
+        let mut incidence_west: Vec<f64> = vec![90.0; minutes];
+        let mut zenith: Vec<f64> = vec![90.0; minutes];
+        let mut azimuth: Vec<f64> = vec![0.0; minutes];
+        let mut elevation: Vec<f64> = vec![0.0; minutes];
 
-        for toi in 0..1440usize {
+        for toi in 0..minutes {
             let time_of_interest = day_start.add(TimeDelta::minutes(toi as i64));
 
             if time_of_interest >= sunrise && time_of_interest < sunset {
@@ -235,7 +241,7 @@ impl PVProduction {
     /// * 'temp' - ambient temperature in degrees Celsius
     /// * 'inc_deg' - sun incidence on panels in degrees
     /// * 'sif' - sun intensity factor
-    fn roof_temperature(&self, up: Option<usize>, temp: &[f64], inc_deg: &[f64;1440], sif: &[f64;1440]) -> Result<[f64;1440]> {
+    fn roof_temperature(&self, up: Option<usize>, temp: &[f64], inc_deg: &[f64], sif: &[f64]) -> Result<Vec<f64>> {
 
         let t_roof = roof_thermodynamics(
             temp,
@@ -249,7 +255,7 @@ impl PVProduction {
             Some(self.tau_down * 3600.0),
             up)?;
 
-        let mut result: [f64;1440] = [0.0; 1440];
+        let mut result: Vec<f64> = vec![0.0; temp.len()];
         (0..1440)
             .into_iter()
             .for_each(|i| {
@@ -309,7 +315,7 @@ pub fn schlick_iam(theta_deg: f64, factor: f64) -> f64 {
 /// # Arguments
 ///
 /// * 'zenith_angle' - sun angle in relation to sun zenith (expected to be clamped between 0 and 90)
-fn sun_intensity_factor(zenith_angle: &[f64;1440]) -> [f64;1440] {
+fn sun_intensity_factor(zenith_angle: &[f64]) -> Vec<f64> {
 
     // The ratio between the earth's radius (6371 km) and the effective height of the atmosphere (9 km)
     const R: f64 = 708.0;
@@ -317,7 +323,7 @@ fn sun_intensity_factor(zenith_angle: &[f64;1440]) -> [f64;1440] {
     // Intensity external to earths atmosphere
     const I_0: f64 = 1353.0;
 
-    let mut result: [f64;1440] = [0.0; 1440];
+    let mut result: Vec<f64> = vec![0.0; zenith_angle.len()];
 
     for i in 0..1440usize {
         let zenith_cos = zenith_angle[i].to_radians().cos();
@@ -447,11 +453,11 @@ fn roof_thermodynamics(
 }
 
 struct SolarPositions {
-    incidence_east: [f64;1440],
-    incidence_west: [f64;1440],
-    azimuth: [f64;1440],
-    elevation: [f64;1440],
-    zenith: [f64;1440],
+    incidence_east: Vec<f64>,
+    incidence_west: Vec<f64>,
+    azimuth: Vec<f64>,
+    elevation: Vec<f64>,
+    zenith: Vec<f64>,
     sunrise: usize,
     sunset: usize,
 }

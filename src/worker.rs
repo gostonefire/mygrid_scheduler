@@ -71,7 +71,7 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> anyho
     {
         // Calculate production and consumption during the day that run_start falls into
         let forecast = retry!(||mgr.forecast.new_forecast(run_schema.run_day_start, run_schema.run_day_end))?;
-        let production = mgr.pv.estimate(&forecast, run_schema.run_day_start, run_schema.run_date)?;
+        let production = mgr.pv.estimate(&forecast, run_schema.run_day_start, run_schema.run_day_end, run_schema.run_date)?;
         let consumption = mgr.cons.estimate(&forecast, run_schema.local_offset)?;
 
         // Calculate the power used in the time span
@@ -84,8 +84,8 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> anyho
 
     if let Some(schedule_date) = &run_schema.run_date_2 {
         // Calculate production and consumption in the time span between schedule day start and schedule start
-        let forecast = retry!(||mgr.forecast.new_forecast(run_schema.run_day_start, run_schema.run_day_end))?;
-        let production = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_date)?;
+        let forecast = retry!(||mgr.forecast.new_forecast(run_schema.schedule_day_start, run_schema.schedule_day_end))?;
+        let production = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date)?;
         let consumption = mgr.cons.estimate(&forecast, run_schema.local_offset)?;
 
         // Calculate the power used in the time span
@@ -113,23 +113,25 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> anyho
 /// * 'run_schema' - a schema with a schedule for running the scheduler, and time converted to Utc
 fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> anyhow::Result<(SchedulerResult, BaseData)> {
     let forecast = retry!(||mgr.forecast.new_forecast(run_schema.schedule_day_start, run_schema.schedule_day_end))?;
-    let pv_estimate = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_date)?;
+    let pv_estimate = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date)?;
     let cons_estimate = mgr.cons.estimate(&forecast, run_schema.local_offset)?;
 
-    let production = MinuteValues::new(pv_estimate, run_schema.schedule_day_start).time_groups(15, true);
-    let consumption = MinuteValues::new(cons_estimate, run_schema.schedule_day_start).time_groups(15, true);
-    let tariffs = retry!(||mgr.nordpool.get_tariffs(run_schema.schedule_day_start, run_schema.schedule_date))?;
+    let production = MinuteValues::new(&pv_estimate, run_schema.schedule_day_start).time_groups(15, true);
+    let consumption = MinuteValues::new(&cons_estimate, run_schema.schedule_day_start).time_groups(15, true);
+    let tariffs = retry!(||mgr.nordpool.get_tariffs(run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date))?;
 
     let mut scheduler = Schedule::new(config);
     let pd = Schedule::preformat_data(&tariffs, &production.data, &consumption.data, run_schema.schedule_start, run_schema.schedule_day_end);
+    info!("Time blocks to schedule for: {}", pd.tariffs.len());
+
     let sr = scheduler.update_scheduling(&pd.tariffs, &pd.cons, &pd.net_prod, soc_in, run_schema.schedule_start);
 
     let base_data = BaseData {
         date_time: run_schema.schedule_day_start,
         base_cost: sr.base_cost,
         schedule_cost: sr.total_cost,
-        production: MinuteValues::new(pv_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
-        consumption: MinuteValues::new(cons_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
+        production: MinuteValues::new(&pv_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
+        consumption: MinuteValues::new(&cons_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
         forecast: forecast.forecast,
         tariffs,
     };
@@ -157,13 +159,11 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> anyhow::Result<RunSc
     };
 
     let run_start_utc = run_start.with_timezone(&Utc);
-    let run_day_start_utc = run_start.duration_trunc(TimeDelta::days(1))?.with_timezone(&Utc);
-    let run_day_end_utc = run_day_start_utc.add(TimeDelta::days(1));
+    let (run_day_start_utc, run_day_end_utc) = get_utc_day_start(run_start_utc, 0);
     let run_date_naive = run_start.date_naive();
 
     let schedule_start_utc = schedule_start.with_timezone(&Utc);
-    let schedule_day_start_utc = schedule_start.duration_trunc(TimeDelta::days(1))?.with_timezone(&Utc);
-    let schedule_day_end_utc = schedule_day_start_utc.add(TimeDelta::days(1));
+    let (schedule_day_start_utc, schedule_day_end_utc) = get_utc_day_start(schedule_start_utc, 0);
     let schedule_date_naive = schedule_start.date_naive();
 
     // Calculate the time span between the run start and the schedule start
@@ -261,6 +261,28 @@ fn clean_up_files(pattern: &str, gate_date_time: DateTime<Utc>) -> anyhow::Resul
     }
 
     Ok(())
+}
+
+/// Returns the start and end (non-inclusive) of a day in UTC time.
+/// For DST switch days (summer to winter time and vice versa), the length of the day
+/// will be either 23 hours (in the spring) or 25 hours (in the autumn).
+///
+/// # Arguments
+///
+/// * 'date_time' - date time to get utc day start and end for (in relation to Local timezone)
+/// * 'day_index' - 0-based index of the day, 0 is today, -1 is yesterday, etc.
+fn get_utc_day_start(date_time: DateTime<Utc>, day_index: i64) -> (DateTime<Utc>, DateTime<Utc>) {
+    // First, go local and move hour to a safe place regarding DST day shift between summer and winter time.
+    // Also, apply the day index to get to the desired day.
+    let date = date_time.with_timezone(&Local).with_hour(12).unwrap().add(TimeDelta::days(day_index));
+
+    // Then trunc to a whole hour and move time to the start of day local (Chrono manages offset change if necessary)
+    let start = date.duration_trunc(TimeDelta::hours(1)).unwrap().with_hour(0).unwrap();
+
+    // Then add one day and do the same as for start
+    let end = date.add(TimeDelta::days(1)).duration_trunc(TimeDelta::hours(1)).unwrap().with_hour(0).unwrap();
+
+    (start.with_timezone(&Utc), end.with_timezone(&Utc))
 }
 
 struct RunMinutes {
