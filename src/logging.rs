@@ -2,8 +2,10 @@ use log4rs::append::console::ConsoleAppender;
 use log4rs::append::file::FileAppender;
 use log4rs::config::{Appender, Root};
 use log4rs::encode::pattern::PatternEncoder;
-use log::LevelFilter;
+use log::{LevelFilter, SetLoggerError};
 use anyhow::Result;
+use log4rs::config::runtime::ConfigErrors;
+use thiserror::Error;
 
 /// Sets up the logger
 ///
@@ -12,7 +14,7 @@ use anyhow::Result;
 /// * 'log_path' - path where to save logs
 /// * 'log_level' - log level
 /// * 'log_to_stdout' - whether to log to stdout or not
-pub fn setup_logger(log_path: &str, log_level: LevelFilter, log_to_stdout: bool) -> Result<()> {
+pub fn setup_logger(log_path: &str, log_level: LevelFilter, log_to_stdout: bool) -> Result<(), LoggerError> {
     let stdout = ConsoleAppender::builder()
         .encoder(Box::new(PatternEncoder::new("[{d(%Y-%m-%dT%H:%M:%S):0<19}{d(%:z)} {l} {M}] - {m}{n}")))
         .build();
@@ -40,4 +42,16 @@ pub fn setup_logger(log_path: &str, log_level: LevelFilter, log_to_stdout: bool)
     let _ = log4rs::init_config(config)?;
 
     Ok(())
+}
+
+/// Error depicting errors that occur while setting up the logger
+///
+#[derive(Debug, Error)]
+#[error("error while setting up logger")]
+pub enum LoggerError {
+    #[error("error setting logger config")]
+    ConfigError(#[from] ConfigErrors),
+    #[error("error setting file appender")]
+    FileAppenderError(#[from] std::io::Error),
+    SetLoggerError(#[from] SetLoggerError),
 }

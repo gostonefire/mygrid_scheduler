@@ -1,7 +1,7 @@
 use rayon::ThreadPoolBuilder;
 use anyhow::Result;
 use log::error;
-use crate::errors::SchedulingError;
+use thiserror::Error;
 use crate::initialization::init;
 use crate::worker::run;
 
@@ -9,7 +9,6 @@ mod scheduler;
 mod manager_nordpool;
 mod manager_production;
 mod spline;
-mod errors;
 mod manager_mail;
 mod manager_forecast;
 mod manager_fox_cloud;
@@ -48,4 +47,8 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-
+/// Error depicting errors that occur while creating and managing schedules
+///
+#[derive(Debug, Error)]
+#[error("error while building schedule: {0}")]
+pub struct SchedulingError(pub String);

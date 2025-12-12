@@ -4,8 +4,8 @@ use std::ops::Add;
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::Serialize;
 use anyhow::Result;
-use crate::errors::ForecastValuesError;
-use crate::spline::MonotonicCubicSpline;
+use thiserror::Error;
+use crate::spline::{MonotonicCubicSpline, SplineError};
 
 #[derive(Serialize, Debug)]
 pub struct BaseData {
@@ -135,7 +135,7 @@ impl ForecastValues {
     ///
     /// * 'minutes' - number of minutes to interpolate from the first forecast value
     /// * 'y_fn' - a function that picks out whatever attribute to use from the forecast
-    pub fn minute_values(&self, minutes: usize, y_fn: fn(&ForecastValue) -> f64) -> Result<Vec<f64>> {
+    pub fn minute_values(&self, minutes: usize, y_fn: fn(&ForecastValue) -> f64) -> Result<Vec<f64>, ForecastValuesError> {
         let base_minute = self.forecast.first().ok_or(ForecastValuesError::EmptyForecastValues)?.valid_time.timestamp() / 60;
         
         let xy = self.forecast
@@ -149,4 +149,15 @@ impl ForecastValues {
 
         Ok(temp)
     }
+}
+
+/// Error depicting errors that occur while managing forecasts values
+///
+#[derive(Debug, Error)]
+#[error("ForecastValuesError: {0}")]
+pub enum ForecastValuesError {
+    #[error("forecast values are empty")]
+    EmptyForecastValues,
+    #[error("unable to instantiate MonotonicCubicSpline")]
+    InterpolationError(#[from] SplineError),
 }

@@ -5,6 +5,8 @@ use chrono::{DateTime, DurationRound, TimeDelta, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use crate::models::{TimeValue, TariffValue, PreformattedData};
 use rayon::prelude::*;
+use thiserror::Error;
+use anyhow::Result;
 use crate::config::Config;
 
 
@@ -164,19 +166,19 @@ impl<'a> Schedule<'a> {
     ///
     /// # Arguments
     ///
-    /// * 'tariffs' - tariffs as given from NordPool
+    /// * 'nordpool_tariffs' - tariffs as given from NordPool
     /// * 'production' - production estimates per quarter
     /// * 'consumption' - consumption estimates per quarter
     /// * 'start_time' - the date time when the schedule shall start (truncated to minutes)
     /// * 'end_time' - the date time when the schedule shall end (truncated to minutes, non-inclusive)
     pub fn preformat_data(
-        tariffs: &Vec<TariffValue>,
+        nordpool_tariffs: &Vec<TariffValue>,
         production: &Vec<TimeValue>,
         consumption: &Vec<TimeValue>,
         start_time: DateTime<Utc>,
-        end_time: DateTime<Utc>) -> PreformattedData
+        end_time: DateTime<Utc>) -> Result<PreformattedData, SchedulerError>
     {
-        let tariffs_in_scope: Vec<f64> = tariffs.iter()
+        let tariffs: Vec<f64> = nordpool_tariffs.iter()
             .filter(|t| t.valid_time >= start_time && t.valid_time < end_time)
             .map(|t| t.buy)
             .collect::<Vec<f64>>();
@@ -196,10 +198,14 @@ impl<'a> Schedule<'a> {
             .enumerate()
             .for_each(|(i, &p)| net_prod.push(p - cons[i]));
 
-        PreformattedData {
-            tariffs: tariffs_in_scope,
-            cons,
-            net_prod,
+        if tariffs.len() != prod.len() || tariffs.len() != cons.len() || tariffs.len() != net_prod.len() {
+            Err(SchedulerError::InconsistentInputDataLength)
+        } else {
+            Ok(PreformattedData {
+                tariffs,
+                cons,
+                net_prod,
+            })            
         }
     }
 
@@ -644,4 +650,14 @@ fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: Dat
     }
 
     result
+}
+
+
+/// Error depicting errors that occur while running the scheduler
+///
+#[derive(Debug, Error)]
+#[error("error while running scheduler")]
+pub enum SchedulerError {
+    #[error("wrong input data length between tariffs, consumption and production")]
+    InconsistentInputDataLength,
 }

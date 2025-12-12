@@ -44,15 +44,17 @@ impl Fox {
     ///
     /// # Arguments
     ///
-    pub fn get_current_soc(&self) -> Result<u8> {
+    pub fn get_current_soc(&self) -> Result<u8, FoxError> {
         let path = "/op/v0/device/real/query";
 
         let req = RequestCurrentSoc { sn: self.sn.clone(), variables: vec!["SoC".to_string()] };
-        let req_json = serde_json::to_string(&req)?;
+        let req_json = serde_json::to_string(&req)
+            .map_err(|e| FoxError::GetSocError(format!("error serializing request: {}", e.to_string())))?;
 
         let json = self.post_request(&path, req_json)?;
 
-        let fox_data: SocCurrentResult = serde_json::from_str(&json)?;
+        let fox_data: SocCurrentResult = serde_json::from_str(&json)
+            .map_err(|e| FoxError::GetSocError(format!("error deserializing response: {}", e.to_string())))?;
 
         Ok(fox_data.result[0].datas[0].value.round() as u8)
     }
@@ -66,21 +68,25 @@ impl Fox {
     ///
     /// * path - the API path excluding the domain
     /// * body - a string containing the payload in JSON format
-    fn post_request(&self, path: &str, body: String) -> Result<String> {
+    fn post_request(&self, path: &str, body: String) -> Result<String, FoxError> {
         let url = format!("{}{}", REQUEST_DOMAIN, path);
 
         let mut req = self.agent.post(url);
-        let headers = req.headers_mut().ok_or(FoxError("RequestBuilder Error".into()))?;
+        let headers = req.headers_mut().ok_or(FoxError::PostRequestError("request builder error".to_string()))?;
         self.generate_headers(headers, &path, Some(vec!(("Content-Type", "application/json"))));
 
         let json = req
-            .send(body)?
+            .send(body)
+            .map_err(|e| FoxError::PostRequestError(format!("ureq error: {}", e.to_string())))?
             .body_mut()
-            .read_to_string()?;
+            .read_to_string()
+            .map_err(|e| FoxError::PostRequestError(format!("ureq error: {}", e.to_string())))?;
 
-        let fox_res: FoxResponse = serde_json::from_str(&json)?;
+        let fox_res: FoxResponse = serde_json::from_str(&json)
+            .map_err(|e| FoxError::PostRequestError(format!("error deserializing response: {}", e.to_string())))?;
+        
         if fox_res.errno != 0 {
-            return Err(FoxError(format!("errno: {}, msg: {}", fox_res.errno, fox_res.msg)))?;
+            return Err(FoxError::PostRequestError(format!("errno: {}, msg: {}", fox_res.errno, fox_res.msg)))?;
         }
 
         Ok(json)

@@ -7,7 +7,7 @@ use spa_sra::errors::SpaError;
 use spa_sra::spa::{Function, Input, SpaData};
 use crate::config::ProductionParameters;
 use crate::models::ForecastValues;
-use crate::manager_production::errors::ProdError;
+use crate::manager_production::errors::ProductionError;
 
 /// Struct for calculating PV production based on solar positions and cloud conditions
 ///
@@ -61,7 +61,7 @@ impl PVProduction {
     /// * 'day_start' - the start time of the day to calculate for
     /// * 'day_end' - the end time of the day to calculate for (non-inclusive)
     /// * 'day_date' - the date to calculate for
-    pub fn estimate(&self, forecast: &ForecastValues, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate) -> Result<Vec<f64>> {
+    pub fn estimate(&self, forecast: &ForecastValues, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate) -> Result<Vec<f64>, ProductionError> {
         let minutes = (day_end - day_start).num_minutes() as usize;
         let temp = forecast.minute_values(minutes, |f| f.temp)?;
         let cloud_factor = forecast.minute_values(minutes, |f| f.cloud_factor)?;
@@ -78,7 +78,7 @@ impl PVProduction {
     /// * 'day_end' - the end time of the day to calculate for (non-inclusive)
     /// * 'day_date' - date to calculate for
     /// * 'temp' - ambient temperature in degrees Celsius
-    fn day_power(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate, temp: &[f64], cloud_factor: &[f64]) -> Result<Vec<f64>> {
+    fn day_power(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate, temp: &[f64], cloud_factor: &[f64]) -> Result<Vec<f64>, ProductionError> {
         let minutes = (day_end - day_start).num_minutes() as usize;
         let mut power: Vec<f64> = vec![0.0;minutes];
         let sp = self.solar_positions(day_start, day_end, day_date)?;
@@ -241,7 +241,7 @@ impl PVProduction {
     /// * 'temp' - ambient temperature in degrees Celsius
     /// * 'inc_deg' - sun incidence on panels in degrees
     /// * 'sif' - sun intensity factor
-    fn roof_temperature(&self, up: Option<usize>, temp: &[f64], inc_deg: &[f64], sif: &[f64]) -> Result<Vec<f64>> {
+    fn roof_temperature(&self, up: Option<usize>, temp: &[f64], inc_deg: &[f64], sif: &[f64]) -> Result<Vec<f64>, ProductionError> {
 
         let t_roof = roof_thermodynamics(
             temp,
@@ -383,7 +383,7 @@ fn roof_thermodynamics(
     t0: Option<f64>,
     tau_down: Option<f64>,
     up: Option<usize>,
-) -> Result<Vec<f64>> {
+) -> Result<Vec<f64>, ProductionError> {
     let n = t_air.len();
     if n == 0 {
         return Ok(Vec::new());
@@ -391,22 +391,22 @@ fn roof_thermodynamics(
 
     // Check arrays lengths and input values
     if inc_deg.len() != n || sif.len() != n {
-        return Err(ProdError::ThermodynamicsError("inc_rad and sif must have the same length as t_air".into()))?;
+        return Err(ProductionError::ThermodynamicsError("inc_rad and sif must have the same length as t_air".into()))?;
     }
     if let Some(c) = clouds {
         if c.len() != n {
-            return Err(ProdError::ThermodynamicsError("clouds must have the same length as t_air".into()))?;
+            return Err(ProductionError::ThermodynamicsError("clouds must have the same length as t_air".into()))?;
         }
     }
     if dt <= 0.0 {
-        return Err(ProdError::ThermodynamicsError("dt must be > 0".into()))?;
+        return Err(ProductionError::ThermodynamicsError("dt must be > 0".into()))?;
     }
     if tau <= 0.0 {
-        return Err(ProdError::ThermodynamicsError("tau must be > 0".into()))?;
+        return Err(ProductionError::ThermodynamicsError("tau must be > 0".into()))?;
     }
     if let Some(td) = tau_down {
         if td <= 0.0 {
-            return Err(ProdError::ThermodynamicsError("tau_down must be > 0".into()))?;
+            return Err(ProductionError::ThermodynamicsError("tau_down must be > 0".into()))?;
         }
     }
 
@@ -461,3 +461,4 @@ struct SolarPositions {
     sunrise: usize,
     sunset: usize,
 }
+

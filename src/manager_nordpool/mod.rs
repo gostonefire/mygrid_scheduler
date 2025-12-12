@@ -53,7 +53,7 @@ impl NordPool {
     /// * 'day_start' - the start time of the day to retrieve prices for
     /// * 'day_end' - the end time of the day to retrieve prices for (non-inclusive)
     /// * 'day_date' - the date to retrieve prices for
-    pub fn get_tariffs(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate) -> Result<Vec<TariffValue>> {
+    pub fn get_tariffs(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate) -> Result<Vec<TariffValue>, NordPoolError> {
         let day_date_utc = TimeZone::from_utc_datetime(&Utc, &day_date.and_hms_opt(0,0,0).unwrap());
         let result = self.get_day_tariffs(day_start, day_end, day_date_utc)?;
 
@@ -67,7 +67,7 @@ impl NordPool {
     /// * 'day_start' - the start time of the day to retrieve prices for
     /// * 'day_end' - the end time of the day to retrieve prices for (non-inclusive)
     /// * 'day_date' - the date to retrieve prices for
-    fn get_day_tariffs(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: DateTime<Utc>) -> Result<Vec<TariffValue>> {
+    fn get_day_tariffs(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: DateTime<Utc>) -> Result<Vec<TariffValue>, NordPoolError> {
         // https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices?date=2025-10-22&market=DayAhead&deliveryArea=SE4&currency=SEK
         let url = "https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices";
         let date = format!("{}", day_date.format("%Y-%m-%d"));
@@ -84,7 +84,7 @@ impl NordPool {
             .call()?;
 
         if response.status() == 204 {
-            return Err(NordPoolError::NoContent)?;
+            return Err(NordPoolError::NoContentError)?;
         }
 
         let json = response
@@ -102,10 +102,10 @@ impl NordPool {
     /// * 'tariffs' - the struct containing prices
     /// * 'day_start' - start of day to transform tariffs for
     /// * 'day_end' - end of day to transform tariffs for (non-inclusive)
-    fn tariffs_to_vec(&self, tariffs: &Tariffs, day_start: DateTime<Utc>, day_end: DateTime<Utc>) -> Result<Vec<TariffValue>> {
+    fn tariffs_to_vec(&self, tariffs: &Tariffs, day_start: DateTime<Utc>, day_end: DateTime<Utc>) -> Result<Vec<TariffValue>, NordPoolError> {
         let entries = tariffs.multi_area_entries.len();
         if entries < 92 {
-            return Err(NordPoolError::Document("number of day tariffs less than 92".into()))?
+            return Err(NordPoolError::ContentLengthError)?
         }
         let day_avg = tariffs.multi_area_entries.iter().map(|t| t.entry_per_area.se4).sum::<f64>() / entries as f64 / 1000.0;
 

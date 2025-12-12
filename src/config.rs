@@ -3,6 +3,7 @@ use log::LevelFilter;
 use serde::Deserialize;
 use anyhow::Result;
 use chrono::{DateTime, Local};
+use thiserror::Error;
 
 #[derive(Deserialize)]
 pub struct GeoRef {
@@ -136,11 +137,13 @@ struct HouseHoldConsumption {
 /// # Arguments
 /// 
 /// * 'config_path' - path to the configuration file
-pub fn load_config(config_path: &str) -> Result<Config> {
+pub fn load_config(config_path: &str) -> Result<Config, LoadConfigurationError> {
     
-    let toml = fs::read_to_string(config_path)?;
-    let mut config: Config = toml::from_str(&toml)?;
-    
+    let toml = fs::read_to_string(config_path)
+        .map_err(|e| LoadConfigurationError::ConfigurationFileError(format!("config file: {}", e.to_string())))?;
+    let mut config: Config = toml::from_str(&toml)
+        .map_err(|e| LoadConfigurationError::TomlParsingError(format!("config file: {}", e.to_string())))?;
+
     let cons_diagram = load_consumption_diagram(&config.files.cons_diagram)?;
     config.consumption.diagram = Some(cons_diagram);
     
@@ -152,11 +155,13 @@ pub fn load_config(config_path: &str) -> Result<Config> {
 /// # Arguments
 ///
 /// * 'diagram_path' - path to the consumption diagram file
-fn load_consumption_diagram(diagram_path: &str) -> Result<[[f64;24];7]> {
+fn load_consumption_diagram(diagram_path: &str) -> Result<[[f64;24];7], LoadConfigurationError> {
     
-    let toml = fs::read_to_string(diagram_path)?;
-    let hhc: HouseHoldConsumption = toml::from_str(&toml)?;
-    
+    let toml = fs::read_to_string(diagram_path)
+        .map_err(|e| LoadConfigurationError::ConfigurationFileError(format!("consumption diagram: {}", e.to_string())))?;
+    let hhc: HouseHoldConsumption = toml::from_str(&toml)
+        .map_err(|e| LoadConfigurationError::TomlParsingError(format!("consumption diagram: {}", e.to_string())))?;
+
     let days: [[f64;24];7] = [
         hhc.consumption_diagram.monday,
         hhc.consumption_diagram.tuesday,
@@ -167,4 +172,15 @@ fn load_consumption_diagram(diagram_path: &str) -> Result<[[f64;24];7]> {
         hhc.consumption_diagram.sunday];
 
         Ok(days)
+}
+
+/// Error depicting errors that occur while loading the configuration file
+///
+#[derive(Debug, Error)]
+#[error("error while loading configuration file")]
+pub enum LoadConfigurationError {
+    #[error("error while loading configuration file: {0}")]
+    ConfigurationFileError(String),
+    #[error("error while parsing configuration file: {0}")]
+    TomlParsingError(String),
 }

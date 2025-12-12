@@ -1,5 +1,5 @@
-use crate::errors::SplineError;
 use anyhow::Result;
+use thiserror::Error;
 
 /// Struct for making a Monotonic Cube Spline interpolation
 /// 
@@ -15,7 +15,7 @@ impl MonotonicCubicSpline {
     /// # Argument
     /// * 'x' - vector of x:es
     /// * 'y' - vector of y:s
-    pub fn new(x : &Vec<f64>, y : &Vec<f64>) -> Result<MonotonicCubicSpline> {
+    pub fn new(x : &Vec<f64>, y : &Vec<f64>) -> Result<MonotonicCubicSpline, SplineError> {
         
         if x.len() != y.len() || x.len() < 2 || y.len() < 2 {
             return Err(SplineError::IllegalLength)?;
@@ -104,4 +104,14 @@ impl MonotonicCubicSpline {
             (*self.m_m.get(i).unwrap(), *self.m_m.get(i+1).unwrap())
         )
     }
+}
+
+/// Error depicting errors that occur during Monotonic Cubic Spline interpolation
+///
+#[derive(Debug, Error)]
+pub enum SplineError {
+    #[error("x is too short")]
+    IllegalLength,
+    #[error("control points not monotonically increasing")]
+    ControlPoint,
 }

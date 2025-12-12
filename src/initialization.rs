@@ -1,12 +1,13 @@
 use std::env;
 use log::info;
 use anyhow::Result;
-use crate::config::{load_config, Config};
+use thiserror::Error;
+use crate::config::{load_config, Config, LoadConfigurationError};
 use crate::consumption::Consumption;
-use crate::logging::setup_logger;
+use crate::logging::{setup_logger, LoggerError};
 use crate::manager_forecast::Forecast;
 use crate::manager_fox_cloud::Fox;
-use crate::manager_mail::Mail;
+use crate::manager_mail::{Mail, MailError};
 use crate::manager_nordpool::NordPool;
 use crate::manager_production::PVProduction;
 
@@ -21,7 +22,7 @@ pub struct Mgr {
 
 /// Initializes and returns configuration and a Mgr struct holding various of initialized structs
 ///
-pub fn init() -> Result<(Config, Mgr)> {
+pub fn init() -> Result<(Config, Mgr), InitializationError> {
     let args: Vec<String> = env::args().collect();
     let config_path = args.iter()
         .find(|p| p.starts_with("--config="))
@@ -61,4 +62,17 @@ pub fn init() -> Result<(Config, Mgr)> {
     };
  
     Ok((config, mgr))
+}
+
+/// Error depicting errors that occur while running the scheduler
+///
+#[derive(Debug, Error)]
+#[error("error while initializing scheduler")]
+pub enum InitializationError {
+    #[error("error while loading configuration file")]
+    ConfigurationError(#[from] LoadConfigurationError),
+    #[error("error while setting up logger")]
+    SetupLoggerError(#[from] LoggerError),
+    #[error("error while setting up mailer")]
+    MailSetupError(#[from] MailError),
 }

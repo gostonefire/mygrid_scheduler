@@ -3,6 +3,8 @@ use std::ops::Add;
 use chrono::{DateTime, Duration, DurationRound, Local, NaiveDate, NaiveDateTime, TimeDelta, Timelike, Utc};
 use glob::glob;
 use log::info;
+use anyhow::Result;
+use thiserror::Error;
 use crate::config::{Config, Files};
 use crate::initialization::Mgr;
 use crate::models::{BaseData, MinuteValues};
@@ -18,7 +20,7 @@ use crate::scheduler::{Block, Schedule, SchedulerResult};
 /// * 'files' - files config
 /// * 'debug_run_time' - a run start date and time to be used instead of Local now
 /// * 'debug_soc_in' - a soc in to be used instead of whatever is calculated
-pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option<DateTime<Local>>, debug_soc_in: Option<u8>) -> anyhow::Result<()> {
+pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option<DateTime<Local>>, debug_soc_in: Option<u8>) -> Result<(), WorkerError> {
 
     // If a run time is given, use that. Otherwise, use the current time.
     let run_start = if let Some(run_start) = debug_run_time {
@@ -59,9 +61,10 @@ pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option
 /// * 'mgr' - struct with managers
 /// * 'run_schema' - a schema with a schedule for running the scheduler, and time converted to Utc
 /// * 'soc_kwh' - kwh per soc unit
-fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> anyhow::Result<u8> {
+fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> Result<u8, WorkerError> {
     // Get the current state of charge from Fox Cloud
-    let soc_in = retry!(||mgr.fox.get_current_soc())?;
+    let soc_in = retry!(||mgr.fox.get_current_soc())
+        .map_err(|e| WorkerError::EstimateSocError(format!("error getting current soc: {}", e.to_string())))?;
 
 
     // Loop through all the dates and calculate the power used during the day and sum it up
@@ -70,9 +73,11 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> anyho
 
     {
         // Calculate production and consumption during the day that run_start falls into
-        let forecast = retry!(||mgr.forecast.new_forecast(run_schema.run_day_start, run_schema.run_day_end))?;
-        let production = mgr.pv.estimate(&forecast, run_schema.run_day_start, run_schema.run_day_end, run_schema.run_date)?;
-        let consumption = mgr.cons.estimate(&forecast, run_schema.local_offset)?;
+        let forecast = retry!(||mgr.forecast.new_forecast(run_schema.run_day_start, run_schema.run_day_end))
+            .map_err(|e| WorkerError::EstimateSocError(format!("error getting forecast: {}", e.to_string())))?;
+        let production = mgr.pv.estimate(&forecast, run_schema.run_day_start, run_schema.run_day_end, run_schema.run_date)
+            .map_err(|e| WorkerError::EstimateSocError(format!("error estimating production: {}", e.to_string())))?;
+        let consumption = mgr.cons.estimate(&forecast, run_schema.local_offset);
 
         // Calculate the power used in the time span
         // The power used is divided by the number of minutes to get the average power used per hour
@@ -84,9 +89,11 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> anyho
 
     if let Some(schedule_date) = &run_schema.run_date_2 {
         // Calculate production and consumption in the time span between schedule day start and schedule start
-        let forecast = retry!(||mgr.forecast.new_forecast(run_schema.schedule_day_start, run_schema.schedule_day_end))?;
-        let production = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date)?;
-        let consumption = mgr.cons.estimate(&forecast, run_schema.local_offset)?;
+        let forecast = retry!(||mgr.forecast.new_forecast(run_schema.schedule_day_start, run_schema.schedule_day_end))
+            .map_err(|e| WorkerError::EstimateSocError(format!("error getting forecast: {}", e.to_string())))?;
+        let production = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date)
+            .map_err(|e| WorkerError::EstimateSocError(format!("error estimating production: {}", e.to_string())))?;
+        let consumption = mgr.cons.estimate(&forecast, run_schema.local_offset);
 
         // Calculate the power used in the time span
         // The power used is divided by the number of minutes to get the average power used per hour
@@ -111,17 +118,21 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> anyho
 /// * 'mgr' - struct with managers
 /// * 'soc_in' - state of battery charge when going in to the schedule
 /// * 'run_schema' - a schema with a schedule for running the scheduler, and time converted to Utc
-fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> anyhow::Result<(SchedulerResult, BaseData)> {
-    let forecast = retry!(||mgr.forecast.new_forecast(run_schema.schedule_day_start, run_schema.schedule_day_end))?;
-    let pv_estimate = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date)?;
-    let cons_estimate = mgr.cons.estimate(&forecast, run_schema.local_offset)?;
+fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> Result<(SchedulerResult, BaseData), WorkerError> {
+    let forecast = retry!(||mgr.forecast.new_forecast(run_schema.schedule_day_start, run_schema.schedule_day_end))
+        .map_err(|e| WorkerError::GetScheduleError(format!("error getting forecast: {}", e.to_string())))?;
+    let pv_estimate = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date)
+        .map_err(|e| WorkerError::GetScheduleError(format!("error estimating production: {}", e.to_string())))?;
+    let cons_estimate = mgr.cons.estimate(&forecast, run_schema.local_offset);
 
     let production = MinuteValues::new(&pv_estimate, run_schema.schedule_day_start).time_groups(15, true);
     let consumption = MinuteValues::new(&cons_estimate, run_schema.schedule_day_start).time_groups(15, true);
-    let tariffs = retry!(||mgr.nordpool.get_tariffs(run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date))?;
+    let tariffs = retry!(||mgr.nordpool.get_tariffs(run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date))
+        .map_err(|e| WorkerError::GetScheduleError(format!("error getting tariffs: {}", e.to_string())))?;
 
     let mut scheduler = Schedule::new(config);
-    let pd = Schedule::preformat_data(&tariffs, &production.data, &consumption.data, run_schema.schedule_start, run_schema.schedule_day_end);
+    let pd = Schedule::preformat_data(&tariffs, &production.data, &consumption.data, run_schema.schedule_start, run_schema.schedule_day_end)
+        .map_err(|e| WorkerError::GetScheduleError(format!("error preformatting data: {}", e.to_string())))?;
     info!("Time blocks to schedule for: {}", pd.tariffs.len());
 
     let sr = scheduler.update_scheduling(&pd.tariffs, &pd.cons, &pd.net_prod, soc_in, run_schema.schedule_start);
@@ -144,7 +155,7 @@ fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, run_schema: &RunSche
 /// # Arguments
 ///
 /// * 'run_start' - time when calculation starts
-fn get_schedule_start_schema(run_start: DateTime<Local>) -> anyhow::Result<RunSchema> {
+fn get_schedule_start_schema(run_start: DateTime<Local>) -> Result<RunSchema, WorkerError> {
     // The run start is given, the schedule start, however, is assumed to be some x minutes
     // in the future since it takes quite a while to calculate.
     //
@@ -153,9 +164,17 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> anyhow::Result<RunSc
     // * if the run starts at or after 23:15, we add one hour and cannibalize from the next day (1395 is the minute of the day for 23:15).
     // * Otherwise, we calculate a schedule for the entire next day
     let schedule_start = if run_start.hour() < 21 || run_start.hour() * 60 + run_start.minute() >= 1395 {
-        run_start.add(TimeDelta::hours(1)).duration_trunc(TimeDelta::minutes(15))?
+        run_start
+            .add(TimeDelta::hours(1))
+            .duration_trunc(TimeDelta::minutes(15))
+            .map_err(|e| WorkerError::RunSchemaError(format!("run_start date: {}", e.to_string())))?
     } else {
-        run_start.with_hour(12).unwrap().add(TimeDelta::days(1)).duration_trunc(TimeDelta::hours(1))?.with_hour(0).unwrap()
+        run_start
+            .with_hour(12).unwrap()
+            .add(TimeDelta::days(1))
+            .duration_trunc(TimeDelta::hours(1))
+            .map_err(|e| WorkerError::RunSchemaError(format!("run_start date: {}", e.to_string())))?
+            .with_hour(0).unwrap()
     };
 
     let run_start_utc = run_start.with_timezone(&Utc);
@@ -206,12 +225,14 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> anyhow::Result<RunSc
 /// * 'schedule_start' - the time when the schedule starts
 /// * 'schedule_end' - the time when the schedule ends (non-inclusive)
 /// * 'schedule' - the vector of block that represents the schedule
-fn save_schedule(path: &str, schedule_start: DateTime<Utc>, schedule_end: DateTime<Utc>, schedule: &Vec<Block>) -> anyhow::Result<()> {
+fn save_schedule(path: &str, schedule_start: DateTime<Utc>, schedule_end: DateTime<Utc>, schedule: &Vec<Block>) -> Result<(), WorkerError> {
     let filename = format!("{}{}_{}_schedule.json", path, schedule_start.format("%Y%m%d%H%M"), schedule_end.format("%Y%m%d%H%M"));
 
-    let json = serde_json::to_string_pretty(schedule)?;
+    let json = serde_json::to_string_pretty(schedule)
+        .map_err(|e| WorkerError::SaveScheduleError(format!("error serializing schedule: {}", e.to_string())))?;
 
-    fs::write(&filename, json)?;
+    fs::write(&filename, json)
+        .map_err(|e| WorkerError::SaveScheduleError(format!("error writing schedule to file: {}", e.to_string())))?;
 
     clean_up_files(&format!("{}*_schedule.json", path), schedule_start)?;
 
@@ -226,12 +247,14 @@ fn save_schedule(path: &str, schedule_start: DateTime<Utc>, schedule_end: DateTi
 ///
 /// * 'path' - path to the base data dir
 /// * 'base_data' - base data to save
-fn save_base_data(path: &str, base_data: &BaseData) -> anyhow::Result<()> {
+fn save_base_data(path: &str, base_data: &BaseData) -> Result<(), WorkerError> {
     let filename = format!("{}{}_base_data.json", path, base_data.date_time.format("%Y%m%d%H%M"));
 
-    let json = serde_json::to_string_pretty(base_data)?;
+    let json = serde_json::to_string_pretty(base_data)
+        .map_err(|e| WorkerError::SaveBaseDataError(format!("error serializing base data: {}", e.to_string())))?;
 
-    fs::write(&filename, json)?;
+    fs::write(&filename, json)
+        .map_err(|e| WorkerError::SaveBaseDataError(format!("error writing base data to file: {}", e.to_string())))?;
 
     clean_up_files(&format!("{}*_base_data.json", path), base_data.date_time)?;
 
@@ -246,14 +269,18 @@ fn save_base_data(path: &str, base_data: &BaseData) -> anyhow::Result<()> {
 ///
 /// * 'pattern' - file pattern
 /// * 'gate_date_time' - the date time representing a newly created file
-fn clean_up_files(pattern: &str, gate_date_time: DateTime<Utc>) -> anyhow::Result<()> {
-    for entry in glob(&pattern)? {
+fn clean_up_files(pattern: &str, gate_date_time: DateTime<Utc>) -> Result<(), WorkerError> {
+    for entry in glob(&pattern)
+        .map_err(|e| WorkerError::CleanUpError(format!("error reading files with pattern {}: {}", pattern, e.to_string())))? {
         if let Ok(path) = entry {
             if let Some(os_name) = path.file_name() {
                 if let Some(filename) = os_name.to_str() {
-                    let datetime: DateTime<Utc> = NaiveDateTime::parse_from_str(&filename[0..12], "%Y%m%d%H%M")?.and_local_timezone(Utc).unwrap();
+                    let datetime: DateTime<Utc> = NaiveDateTime::parse_from_str(&filename[0..12], "%Y%m%d%H%M")
+                        .map_err(|e| WorkerError::CleanUpError(format!("error parsing date: {}", e.to_string())))?
+                        .and_local_timezone(Utc).unwrap();
                     if gate_date_time - datetime > Duration::hours(48) {
-                        fs::remove_file(path)?;
+                        fs::remove_file(path)
+                            .map_err(|e| WorkerError::CleanUpError(format!("error removing file: {}", e.to_string())))?;
                     }
                 }
             }
@@ -302,4 +329,23 @@ struct RunSchema {
     local_offset: i64,
     run_date_1: RunMinutes,
     run_date_2: Option<RunMinutes>,
+}
+
+/// Error depicting errors that occur while running the scheduler
+///
+#[derive(Debug, Error)]
+#[error("error while running scheduler")]
+pub enum WorkerError {
+    #[error("error while creating run schema: {0:?}")]
+    RunSchemaError(String),
+    #[error("error while saving schedule: {0:?}")]
+    SaveScheduleError(String),
+    #[error("error while saving base data: {0:?}")]
+    SaveBaseDataError(String),
+    #[error("error while cleaning up old files: {0:?}")]
+    CleanUpError(String),
+    #[error("error while estimating soc: {0:?}")]
+    EstimateSocError(String),
+    #[error("error while getting schedule: {0:?}")]
+    GetScheduleError(String),
 }

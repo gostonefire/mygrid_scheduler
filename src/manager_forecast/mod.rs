@@ -48,20 +48,25 @@ impl Forecast {
     ///
     /// * 'from' - the datetime to get forecast from
     /// * 'to' - the datetime to get forecast to (non-inclusive)
-    pub fn new_forecast(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<ForecastValues> {
-        let from = from.duration_trunc(TimeDelta::hours(1))?;
-        let to = to.duration_trunc(TimeDelta::hours(1))?;
+    pub fn new_forecast(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<ForecastValues, ForecastError> {
+        let from = from.duration_trunc(TimeDelta::hours(1))
+            .map_err(|e| ForecastError::DateError(format!("from date: {}", e.to_string())))?;
+        let to = to.duration_trunc(TimeDelta::hours(1))
+            .map_err(|e| ForecastError::DateError(format!("to date: {}", e.to_string())))?;
 
         let url = format!("http://{}:{}/forecast", self.host, self.port);
 
         let json = self.agent
             .get(url)
             .query_pairs(vec![("id", "smhi"), ("from", &from.to_rfc3339()), ("to", &to.to_rfc3339())])
-            .call()?
+            .call()
+            .map_err(|e| ForecastError::FetchError(e.to_string()))?
             .body_mut()
-            .read_to_string()?;
+            .read_to_string()
+            .map_err(|e| ForecastError::FetchError(e.to_string()))?;
 
-        let tmp_forecast: Vec<ForecastRecord> = serde_json::from_str(&json)?;
+        let tmp_forecast: Vec<ForecastRecord> = serde_json::from_str(&json)
+            .map_err(|e| ForecastError::ParseError(e.to_string()))?;
 
         let mut forecast: Vec<ForecastValue> = Vec::new();
 
@@ -81,7 +86,7 @@ impl Forecast {
 
 
         if forecast.len() == 0 {
-            Err(ForecastError(format!("No forecast found for {} - {}", from, to)).into())
+            Err(ForecastError::EmptyForecastError(format!("No forecast found for {} - {}", from, to)))
         } else {
             Ok(ForecastValues{forecast})
         }
