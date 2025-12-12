@@ -1,13 +1,12 @@
-pub mod errors;
-
 use std::ops::Add;
 use chrono::{DateTime, DurationRound, NaiveDate, TimeDelta, TimeZone, Utc};
 use anyhow::Result;
 use spa_sra::errors::SpaError;
 use spa_sra::spa::{Function, Input, SpaData};
+use thiserror::Error;
 use crate::config::ProductionParameters;
-use crate::models::ForecastValues;
-use crate::manager_production::errors::ProductionError;
+use crate::models::{ForecastValues, ForecastValuesError};
+
 
 /// Struct for calculating PV production based on solar positions and cloud conditions
 ///
@@ -462,3 +461,15 @@ struct SolarPositions {
     sunset: usize,
 }
 
+/// Error depicting errors that occur while estimating power production
+///
+#[derive(Debug, Error)]
+#[error("error while estimating production")]
+pub enum ProductionError {
+    #[error("wrong input data length between tariffs, consumption and production")]
+    WeatherDataError(#[from] ForecastValuesError),
+    #[error("error while calculating solar positions")]
+    SolarPositionsError(#[from] SpaError),
+    #[error("error in thermodynamics: {0}")]
+    ThermodynamicsError(String),
+}

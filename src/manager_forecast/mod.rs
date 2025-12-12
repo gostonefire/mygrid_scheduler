@@ -1,12 +1,11 @@
-pub mod errors;
 mod models;
 
 use std::time::Duration;
 use chrono::{DateTime, DurationRound, TimeDelta, Utc};
 use ureq::Agent;
 use anyhow::Result;
+use thiserror::Error;
 use crate::config::Config;
-use crate::manager_forecast::errors::ForecastError;
 use crate::models::{ForecastValue, ForecastValues};
 use crate::manager_forecast::models::ForecastRecord;
 
@@ -112,3 +111,15 @@ impl Forecast {
     }
 }
 
+#[derive(Error, Debug)]
+#[error("error in forecast manager")]
+pub enum ForecastError {
+    #[error("error while managing dates: {0}")]
+    DateError(String),
+    #[error("error while fetching forecast: {0}")]
+    FetchError(String),
+    #[error("error while parsing forecast: {0}")]
+    ParseError(String),
+    #[error("error while processing forecast: {0}")]
+    EmptyForecastError(String),
+}

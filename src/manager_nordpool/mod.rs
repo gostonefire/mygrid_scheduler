@@ -1,11 +1,10 @@
-pub mod errors;
 mod models;
 
 use std::time::Duration;
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use ureq::Agent;
 use anyhow::Result;
-use crate::manager_nordpool::errors::NordPoolError;
+use thiserror::Error;
 use crate::models::{TariffValue};
 use crate::config::TariffFees;
 use crate::manager_nordpool::models::Tariffs;
@@ -151,4 +150,16 @@ impl NordPool {
 /// * 'price' - the price to round to two decimals
 fn round_to_two_decimals(price: f64) -> f64 {
     (price * 100f64).round() / 100f64
+}
+
+#[derive(Error, Debug)]
+pub enum NordPoolError {
+    #[error("error parsing document: {0}")]
+    DocumentError(#[from] serde_json::Error),
+    #[error("ureq error: {0}")]
+    NetworkError(#[from] ureq::Error),
+    #[error("no content for the requested time period")]
+    NoContentError,
+    #[error("content length error")]
+    ContentLengthError,
 }

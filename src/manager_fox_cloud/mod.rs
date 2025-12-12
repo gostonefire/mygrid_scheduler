@@ -1,4 +1,3 @@
-pub mod errors;
 mod models;
 
 use std::str::FromStr;
@@ -9,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use ureq::Agent;
 use ureq::http::{HeaderMap, HeaderName, HeaderValue};
 use anyhow::Result;
+use thiserror::Error;
 use crate::config::FoxESS;
-use crate::manager_fox_cloud::errors::FoxError;
 use crate::manager_fox_cloud::models::{RequestCurrentSoc, SocCurrentResult};
 
 const REQUEST_DOMAIN: &str = "https://www.foxesscloud.com";
@@ -127,4 +126,11 @@ struct FoxResponse {
     msg: String,
 }
 
-
+#[derive(Error, Debug)]
+#[error("FoxCloud error: {0}")]
+pub enum FoxError {
+    #[error("error getting SoC from Fox Cloud: {0}")]
+    GetSocError(String),
+    #[error("error posting request to Fox Cloud: {0}")]
+    PostRequestError(String),
+}
