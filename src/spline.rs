@@ -18,7 +18,7 @@ impl MonotonicCubicSpline {
     pub fn new(x : &Vec<f64>, y : &Vec<f64>) -> Result<MonotonicCubicSpline, SplineError> {
         
         if x.len() != y.len() || x.len() < 2 || y.len() < 2 {
-            return Err(SplineError::IllegalLength)?;
+            return Err(SplineError::InconsistentXYLengthError)?;
         }
 
         let n = x.len();
@@ -29,7 +29,7 @@ impl MonotonicCubicSpline {
         for i in 0..(n-1) {
             let h = *x.get(i + 1).unwrap() - *x.get(i).unwrap();
             if h <= 0.0 {
-                return Err(SplineError::ControlPoint)?;
+                return Err(SplineError::ControlPointsError("control points not monotonically increasing".to_string()))?;
             }
             secants[i] = (*y.get(i + 1).unwrap() - *y.get(i).unwrap()) / h;
 
@@ -110,8 +110,8 @@ impl MonotonicCubicSpline {
 ///
 #[derive(Debug, Error)]
 pub enum SplineError {
-    #[error("x is too short")]
-    IllegalLength,
-    #[error("control points not monotonically increasing")]
-    ControlPoint,
+    #[error("InconsistentXYLengthError")]
+    InconsistentXYLengthError,
+    #[error("ControlPointsError: {0}")]
+    ControlPointsError(String),
 }

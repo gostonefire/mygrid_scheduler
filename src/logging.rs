@@ -47,11 +47,11 @@ pub fn setup_logger(log_path: &str, log_level: LevelFilter, log_to_stdout: bool)
 /// Error depicting errors that occur while setting up the logger
 ///
 #[derive(Debug, Error)]
-#[error("error while setting up logger")]
 pub enum LoggerError {
-    #[error("error setting logger config")]
+    #[error("ConfigError :{0}")]
     ConfigError(#[from] ConfigErrors),
-    #[error("error setting file appender")]
+    #[error("FileAppenderError: {0}")]
     FileAppenderError(#[from] std::io::Error),
+    #[error("SetLoggerError: {0}")]
     SetLoggerError(#[from] SetLoggerError),
 }

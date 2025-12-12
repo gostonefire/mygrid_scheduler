@@ -38,8 +38,8 @@ fn main() -> Result<()> {
             mgr.mail.send_mail("Report".into(), "Successfully created new schedule".into())?;
         },
         Err(e) => {
-            error!("Run failed: {}", e);
-            mgr.mail.send_mail("Error in scheduler".into(), format!("Run failed: {}", e))?;
+            error!("Run failed: {}", e.to_string());
+            mgr.mail.send_mail("Error in scheduler".into(), format!("Run failed: {}", e.to_string()))?;
             return Err(e)?;
         }
     }
@@ -50,5 +50,5 @@ fn main() -> Result<()> {
 /// Error depicting errors that occur while creating and managing schedules
 ///
 #[derive(Debug, Error)]
-#[error("error while building schedule: {0}")]
+#[error("SchedulingError: {0}")]
 pub struct SchedulingError(pub String);

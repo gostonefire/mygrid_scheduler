@@ -65,14 +65,13 @@ impl Mail {
 /// Error depicting errors that occur while sending emails
 ///
 #[derive(Debug, Error)]
-#[error("error while sending email")]
 pub enum MailError {
-    #[error("smtp transport error: {0}")]
+    #[error("SMTPTransportError: {0}")]
     SMTPTransportError(String),
-    #[error("transport error: {0}")]
+    #[error("TransportError: {0}")]
     TransportError(String),
-    #[error("error parsing email address: {0}")]
+    #[error("ParseError: {0}")]
     ParseError(String),
-    #[error("error compiling message: {0}")]
+    #[error("MessageError: {0}")]
     MessageError(String),
 }

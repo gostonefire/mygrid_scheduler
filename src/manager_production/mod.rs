@@ -464,12 +464,11 @@ struct SolarPositions {
 /// Error depicting errors that occur while estimating power production
 ///
 #[derive(Debug, Error)]
-#[error("error while estimating production")]
 pub enum ProductionError {
-    #[error("wrong input data length between tariffs, consumption and production")]
+    #[error("WeatherDataError: {0}")]
     WeatherDataError(#[from] ForecastValuesError),
-    #[error("error while calculating solar positions")]
+    #[error("SolarPositionsError: {0}")]
     SolarPositionsError(#[from] SpaError),
-    #[error("error in thermodynamics: {0}")]
+    #[error("ThermodynamicsError: {0}")]
     ThermodynamicsError(String),
 }

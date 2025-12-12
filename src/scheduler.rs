@@ -656,8 +656,7 @@ fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: Dat
 /// Error depicting errors that occur while running the scheduler
 ///
 #[derive(Debug, Error)]
-#[error("error while running scheduler")]
 pub enum SchedulerError {
-    #[error("wrong input data length between tariffs, consumption and production")]
+    #[error("InconsistentInputDataLength")]
     InconsistentInputDataLength,
 }

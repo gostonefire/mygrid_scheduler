@@ -334,18 +334,17 @@ struct RunSchema {
 /// Error depicting errors that occur while running the scheduler
 ///
 #[derive(Debug, Error)]
-#[error("error while running scheduler")]
 pub enum WorkerError {
-    #[error("error while creating run schema: {0:?}")]
+    #[error("RunSchemaError: {0}")]
     RunSchemaError(String),
-    #[error("error while saving schedule: {0:?}")]
+    #[error("SaveScheduleError: {0}")]
     SaveScheduleError(String),
-    #[error("error while saving base data: {0:?}")]
+    #[error("SaveBaseDataError: {0}")]
     SaveBaseDataError(String),
-    #[error("error while cleaning up old files: {0:?}")]
+    #[error("CleanUpError: {0}")]
     CleanUpError(String),
-    #[error("error while estimating soc: {0:?}")]
+    #[error("EstimateSocError: {0}")]
     EstimateSocError(String),
-    #[error("error while getting schedule: {0:?}")]
+    #[error("GetScheduleError: {0}")]
     GetScheduleError(String),
 }

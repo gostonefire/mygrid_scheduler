@@ -177,10 +177,9 @@ fn load_consumption_diagram(diagram_path: &str) -> Result<[[f64;24];7], LoadConf
 /// Error depicting errors that occur while loading the configuration file
 ///
 #[derive(Debug, Error)]
-#[error("error while loading configuration file")]
 pub enum LoadConfigurationError {
-    #[error("error while loading configuration file: {0}")]
+    #[error("ConfigurationFileError: {0}")]
     ConfigurationFileError(String),
-    #[error("error while parsing configuration file: {0}")]
+    #[error("TomlParsingError: {0}")]
     TomlParsingError(String),
 }

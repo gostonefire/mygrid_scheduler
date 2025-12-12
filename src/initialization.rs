@@ -64,15 +64,14 @@ pub fn init() -> Result<(Config, Mgr), InitializationError> {
     Ok((config, mgr))
 }
 
-/// Error depicting errors that occur while running the scheduler
+/// Error depicting errors that occur while initializing the scheduler
 ///
 #[derive(Debug, Error)]
-#[error("error while initializing scheduler")]
 pub enum InitializationError {
-    #[error("error while loading configuration file")]
+    #[error("ConfigurationError: {0}")]
     ConfigurationError(#[from] LoadConfigurationError),
-    #[error("error while setting up logger")]
+    #[error("SetupLoggerError: {0}")]
     SetupLoggerError(#[from] LoggerError),
-    #[error("error while setting up mailer")]
+    #[error("MailSetupError: {0}")]
     MailSetupError(#[from] MailError),
 }

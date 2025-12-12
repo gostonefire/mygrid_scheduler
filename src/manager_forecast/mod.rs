@@ -112,14 +112,13 @@ impl Forecast {
 }
 
 #[derive(Error, Debug)]
-#[error("error in forecast manager")]
 pub enum ForecastError {
-    #[error("error while managing dates: {0}")]
+    #[error("DateError: {0}")]
     DateError(String),
-    #[error("error while fetching forecast: {0}")]
+    #[error("FetchError: {0}")]
     FetchError(String),
-    #[error("error while parsing forecast: {0}")]
+    #[error("ParseError: {0}")]
     ParseError(String),
-    #[error("error while processing forecast: {0}")]
+    #[error("EmptyForecastError: {0}")]
     EmptyForecastError(String),
 }

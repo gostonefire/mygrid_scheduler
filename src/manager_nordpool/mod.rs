@@ -154,12 +154,12 @@ fn round_to_two_decimals(price: f64) -> f64 {
 
 #[derive(Error, Debug)]
 pub enum NordPoolError {
-    #[error("error parsing document: {0}")]
+    #[error("DocumentError: {0}")]
     DocumentError(#[from] serde_json::Error),
-    #[error("ureq error: {0}")]
+    #[error("NetworkError: {0}")]
     NetworkError(#[from] ureq::Error),
-    #[error("no content for the requested time period")]
+    #[error("NoContentError")]
     NoContentError,
-    #[error("content length error")]
+    #[error("ContentLengthError")]
     ContentLengthError,
 }

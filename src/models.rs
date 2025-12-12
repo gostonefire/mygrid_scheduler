@@ -154,10 +154,9 @@ impl ForecastValues {
 /// Error depicting errors that occur while managing forecasts values
 ///
 #[derive(Debug, Error)]
-#[error("ForecastValuesError: {0}")]
 pub enum ForecastValuesError {
-    #[error("forecast values are empty")]
+    #[error("EmptyForecastValues")]
     EmptyForecastValues,
-    #[error("unable to instantiate MonotonicCubicSpline")]
+    #[error("InterpolationError: {0}")]
     InterpolationError(#[from] SplineError),
 }
