@@ -7,7 +7,7 @@ use anyhow::Result;
 use thiserror::Error;
 use crate::config::{Config, Files};
 use crate::initialization::Mgr;
-use crate::models::{BaseData, MinuteValues};
+use crate::models::{BaseData, MinuteValues, TariffFees};
 use crate::{retry, wrapper};
 use crate::scheduler::{Block, Schedule, SchedulerResult};
 
@@ -145,6 +145,16 @@ fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, run_schema: &RunSche
         consumption: MinuteValues::new(&cons_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
         forecast: forecast.forecast,
         tariffs,
+        tariff_fees: TariffFees {
+            variable_fee: config.tariff_fees.variable_fee,
+            spot_fee_percentage: config.tariff_fees.spot_fee_percentage,
+            energy_tax: config.tariff_fees.energy_tax,
+            swedish_power_grid: config.tariff_fees.swedish_power_grid,
+            balance_responsibility: config.tariff_fees.balance_responsibility,
+            electric_certificate: config.tariff_fees.electric_certificate,
+            guarantees_of_origin: config.tariff_fees.guarantees_of_origin,
+            fixed: config.tariff_fees.fixed,
+        }
     };
 
     Ok((sr, base_data))

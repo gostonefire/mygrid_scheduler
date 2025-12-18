@@ -16,6 +16,22 @@ pub struct BaseData {
     pub production: Vec<TimeValue>,
     pub consumption: Vec<TimeValue>,
     pub tariffs: Vec<TariffValue>,
+    pub tariff_fees: TariffFees,
+}
+
+#[derive(Serialize, Debug)]
+pub struct TariffFees {
+    // Power grid fees (öre/kWh, exl. VAT)
+    pub variable_fee: f64,
+    pub spot_fee_percentage: f64,
+    pub energy_tax: f64,
+
+    // Electricity trading fees  (öre/kWh, exl. VAT)
+    pub swedish_power_grid: f64,
+    pub balance_responsibility: f64,
+    pub electric_certificate: f64,
+    pub guarantees_of_origin: f64,
+    pub fixed: f64,
 }
 
 pub struct PreformattedData {
