@@ -131,7 +131,7 @@ pub struct Schedule<'a> {
     cons: &'a[f64],
     schedule_length: usize,
     bat_kwh: f64,
-    soc_kwh: f64,
+    pub(crate) soc_kwh: f64,
     charge_kwh_instance: f64,
     charge_efficiency: f64,
     discharge_efficiency: f64,
@@ -144,15 +144,17 @@ impl<'a> Schedule<'a> {
     /// # Arguments
     ///
     /// * 'config' - configuration struct
-    pub fn new(config: &Config) -> Schedule<'_> {
+    /// * 'soh' - battery's current state of health
+    pub fn new(config: &Config, soh: u8) -> Schedule<'_> {
+        let bat_capacity = config.charge.bat_capacity_kwh * (soh as f64 / 100.0);
         Schedule {
             tariffs: &[0.0],
             base_cost: 0.0,
             net_prod: &[0.0],
             cons: &[0.0],
             schedule_length: 0,
-            bat_kwh: config.charge.bat_kwh,
-            soc_kwh: config.charge.soc_kwh,
+            bat_kwh: bat_capacity * 0.9,
+            soc_kwh: bat_capacity / 100.0,
             charge_kwh_instance: config.charge.charge_kwh_hour,
             charge_efficiency: config.charge.charge_efficiency,
             discharge_efficiency: config.charge.discharge_efficiency,

@@ -39,8 +39,9 @@ pub struct ProductionParameters {
 }
 #[derive(Deserialize)]
 pub struct ChargeParameters {
-    pub bat_kwh: f64,
-    pub soc_kwh: f64,
+    pub bat_capacity_kwh: f64,
+    // pub bat_kwh: f64,
+    // pub soc_kwh: f64,
     pub charge_kwh_hour: f64,
     pub charge_efficiency: f64,
     pub discharge_efficiency: f64,
@@ -95,7 +96,7 @@ pub struct Files {
 #[derive(Deserialize)]
 pub struct General {
     pub debug_run_time: Option<DateTime<Local>>,
-    pub debug_soc_in: Option<u8>,
+    pub debug_soc_soh_in: Option<(u8,u8)>,
     pub log_path: String,
     pub log_level: LevelFilter,
     pub log_to_stdout: bool,

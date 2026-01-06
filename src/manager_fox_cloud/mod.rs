@@ -10,7 +10,7 @@ use ureq::http::{HeaderMap, HeaderName, HeaderValue};
 use anyhow::Result;
 use thiserror::Error;
 use crate::config::FoxESS;
-use crate::manager_fox_cloud::models::{RequestCurrentSoc, SocCurrentResult};
+use crate::manager_fox_cloud::models::{RequestCurrentBatState, DeviceRealTimeResult};
 
 const REQUEST_DOMAIN: &str = "https://www.foxesscloud.com";
 
@@ -37,25 +37,36 @@ impl Fox {
         Self { api_key: config.api_key.to_string(), sn: config.inverter_sn.to_string(), agent }
     }
 
-    /// Get the battery current soc (state of charge)
+    /// Get the battery current soc (state of charge) and soh (state of health)
     ///
-    /// See https://www.foxesscloud.com/public/i18n/en/OpenApiDocument.html#get20device20real-time20data0a3ca20id3dget20device20real-time20data4303e203ca3e
+    /// See https://www.foxesscloud.com/public/i18n/en/OpenApiDocument.html#get20device20real-time20data0a3ca20id3dget20device20real-time20data5603e203ca3e
     ///
     /// # Arguments
     ///
-    pub fn get_current_soc(&self) -> Result<u8, FoxError> {
-        let path = "/op/v0/device/real/query";
+    pub fn get_current_soc_soh(&self) -> Result<(u8,u8), FoxError> {
+        let path = "/op/v1/device/real/query";
 
-        let req = RequestCurrentSoc { sn: self.sn.clone(), variables: vec!["SoC".to_string()] };
+        let req = RequestCurrentBatState { sns: vec![self.sn.clone()], variables: vec!["SoC".to_string(), "SOH".to_string()] };
         let req_json = serde_json::to_string(&req)
             .map_err(|e| FoxError::GetSocError(format!("error serializing request: {}", e.to_string())))?;
 
         let json = self.post_request(&path, req_json)?;
 
-        let fox_data: SocCurrentResult = serde_json::from_str(&json)
+        let fox_data: DeviceRealTimeResult = serde_json::from_str(&json)
             .map_err(|e| FoxError::GetSocError(format!("error deserializing response: {}", e.to_string())))?;
 
-        Ok(fox_data.result[0].datas[0].value.round() as u8)
+        let mut soc: u8 = 0;
+        let mut soh: u8 = 0;
+
+        for data in fox_data.result[0].datas.iter() {
+            match data.variable.as_str() {
+                "SoC" => soc = data.value.round() as u8,
+                "SOH" => soh = data.value.round() as u8,
+                _ => (),
+            }
+        }
+
+        Ok((soc, soh))
     }
 
 

@@ -1,22 +1,23 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
-pub struct RequestCurrentSoc {
-    pub sn: String,
+pub struct RequestCurrentBatState {
     pub variables: Vec<String>,
+    pub sns: Vec<String>,}
+
+
+#[derive(Deserialize)]
+pub struct DeviceRealTimeResult {
+    pub result: Vec<RealTimeVariables>,
 }
 
 #[derive(Deserialize)]
-pub struct SocCurrentData {
+pub struct RealTimeVariables {
+    pub datas: Vec<RealTimeData>,
+}
+
+#[derive(Deserialize)]
+pub struct RealTimeData {
+    pub variable: String,
     pub value: f64,
-}
-
-#[derive(Deserialize)]
-pub struct SocCurrentVariables {
-    pub datas: Vec<SocCurrentData>,
-}
-
-#[derive(Deserialize)]
-pub struct SocCurrentResult {
-    pub result: Vec<SocCurrentVariables>,
 }

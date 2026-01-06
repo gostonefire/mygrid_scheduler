@@ -19,8 +19,8 @@ use crate::scheduler::{Block, Schedule, SchedulerResult};
 /// * 'mgr' - struct with configured managers
 /// * 'files' - files config
 /// * 'debug_run_time' - a run start date and time to be used instead of Local now
-/// * 'debug_soc_in' - a soc in to be used instead of whatever is calculated
-pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option<DateTime<Local>>, debug_soc_in: Option<u8>) -> Result<(), WorkerError> {
+/// * 'debug_soc_soh_in' - a soc and soh in to be used instead of whatever is calculated
+pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option<DateTime<Local>>, debug_soc_soh_in: Option<(u8, u8)>) -> Result<(), WorkerError> {
 
     // If a run time is given, use that. Otherwise, use the current time.
     let run_start = if let Some(run_start) = debug_run_time {
@@ -34,14 +34,14 @@ pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option
     info!("Run start: {}, Schedule Start: {}", run_schema.run_start, run_schema.schedule_start);
 
     // Estimate how much battery capacity we lose between the run start and the schedule start
-    let start_soc = if let Some(soc_in) = debug_soc_in {
-        soc_in
+    let (start_soc, soh) = if let Some((soc_in, soh)) = debug_soc_soh_in {
+        (soc_in, soh)
     } else {
-        estimate_soc_in(mgr, &run_schema, config.charge.soc_kwh)?
+        estimate_soc_in(mgr, &run_schema, config.charge.bat_capacity_kwh)?
     };
 
     // Calculate the new schedule
-    let (scheduler_result, base_data) = get_schedule(&config, mgr, start_soc, &run_schema)?;
+    let (scheduler_result, base_data) = get_schedule(&config, mgr, start_soc, soh, &run_schema)?;
 
     info!("Base Cost: {}, Schedule Cost: {}", scheduler_result.base_cost, scheduler_result.total_cost);
     for b in scheduler_result.blocks.iter() {
@@ -54,18 +54,19 @@ pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option
     Ok(())
 }
 
-/// Tries to estimate what the SoC will be at a specific time
+/// Tries to estimate what the SoC will be at a specific time, also returns SoH
 ///
 /// # Arguments
 ///
 /// * 'mgr' - struct with managers
 /// * 'run_schema' - a schema with a schedule for running the scheduler, and time converted to Utc
-/// * 'soc_kwh' - kwh per soc unit
-fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> Result<u8, WorkerError> {
+/// * 'bat_capacity_kwh' - new battery capacity in kWh
+fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, bat_capacity_kwh: f64) -> Result<(u8, u8), WorkerError> {
     // Get the current state of charge from Fox Cloud
-    let soc_in = retry!(||mgr.fox.get_current_soc())
+    let (soc_in, soh) = retry!(||mgr.fox.get_current_soc_soh())
         .map_err(|e| WorkerError::EstimateSocError(format!("error getting current soc: {}", e.to_string())))?;
 
+    let soc_kwh = bat_capacity_kwh * (soh as f64 / 100.0) / 100.0;
 
     // Loop through all the dates and calculate the power used during the day and sum it up
     let mut power_used = 0f64;
@@ -107,7 +108,7 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> Resul
     // 10% is the lowest SoC that the battery accepts; anything below is considered 10%
     let start_soc = (soc_in as i8 + (power_used / soc_kwh) as i8).max(10) as u8;
     info!("Soc In: {}, Start SoC: {}, Power Used: {}, Minutes: {}", soc_in, start_soc, power_used, minutes);
-    Ok(start_soc)
+    Ok((start_soc, soh))
 }
 
 /// Calculates a new schedule
@@ -117,8 +118,9 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, soc_kwh: f64) -> Resul
 /// * 'config' - configuration
 /// * 'mgr' - struct with managers
 /// * 'soc_in' - state of battery charge when going in to the schedule
+/// * 'soh' - battery's current state of health
 /// * 'run_schema' - a schema with a schedule for running the scheduler, and time converted to Utc
-fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, run_schema: &RunSchema) -> Result<(SchedulerResult, BaseData), WorkerError> {
+fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, soh: u8, run_schema: &RunSchema) -> Result<(SchedulerResult, BaseData), WorkerError> {
     let forecast = retry!(||mgr.forecast.new_forecast(run_schema.schedule_day_start, run_schema.schedule_day_end))
         .map_err(|e| WorkerError::GetScheduleError(format!("error getting forecast: {}", e.to_string())))?;
     let pv_estimate = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date)
@@ -130,7 +132,7 @@ fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, run_schema: &RunSche
     let tariffs = retry!(||mgr.nordpool.get_tariffs(run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date))
         .map_err(|e| WorkerError::GetScheduleError(format!("error getting tariffs: {}", e.to_string())))?;
 
-    let mut scheduler = Schedule::new(config);
+    let mut scheduler = Schedule::new(config, soh);
     let pd = Schedule::preformat_data(&tariffs, &production.data, &consumption.data, run_schema.schedule_start, run_schema.schedule_day_end)
         .map_err(|e| WorkerError::GetScheduleError(format!("error preformatting data: {}", e.to_string())))?;
     info!("Time blocks to schedule for: {}", pd.tariffs.len());
@@ -141,6 +143,7 @@ fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, run_schema: &RunSche
         date_time: run_schema.schedule_day_start,
         base_cost: sr.base_cost,
         schedule_cost: sr.total_cost,
+        soc_kwh: scheduler.soc_kwh,
         production: MinuteValues::new(&pv_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
         consumption: MinuteValues::new(&cons_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
         forecast: forecast.forecast,

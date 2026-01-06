@@ -33,7 +33,7 @@ fn main() -> Result<()> {
     };
 
     // Create a new schedule
-    match run(&config, &mut mgr, &config.files, config.general.debug_run_time, config.general.debug_soc_in) {
+    match run(&config, &mut mgr, &config.files, config.general.debug_run_time, config.general.debug_soc_soh_in) {
         Ok(_) => {
             mgr.mail.send_mail("Report".into(), "Successfully created new schedule".into())?;
         },

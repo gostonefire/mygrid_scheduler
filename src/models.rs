@@ -12,6 +12,7 @@ pub struct BaseData {
     pub date_time: DateTime<Utc>,
     pub base_cost: f64,
     pub schedule_cost: f64,
+    pub soc_kwh: f64,
     pub forecast: Vec<ForecastValue>,
     pub production: Vec<TimeValue>,
     pub consumption: Vec<TimeValue>,
