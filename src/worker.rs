@@ -20,7 +20,7 @@ use crate::scheduler::{Block, Schedule, SchedulerResult};
 /// * 'files' - files config
 /// * 'debug_run_time' - a run start date and time to be used instead of Local now
 /// * 'debug_soc_soh_in' - a soc and soh in to be used instead of whatever is calculated
-pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option<DateTime<Local>>, debug_soc_soh_in: Option<(u8, u8)>) -> Result<(), WorkerError> {
+pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option<DateTime<Local>>, debug_soc_soh_in: Option<[u8;2]>) -> Result<(), WorkerError> {
 
     // If a run time is given, use that. Otherwise, use the current time.
     let run_start = if let Some(run_start) = debug_run_time {
@@ -34,8 +34,8 @@ pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option
     info!("Run start: {}, Schedule Start: {}", run_schema.run_start, run_schema.schedule_start);
 
     // Estimate how much battery capacity we lose between the run start and the schedule start
-    let (start_soc, soh) = if let Some((soc_in, soh)) = debug_soc_soh_in {
-        (soc_in, soh)
+    let (start_soc, soh) = if let Some(soc_soh) = debug_soc_soh_in {
+        (soc_soh[0], soc_soh[1])
     } else {
         estimate_soc_in(mgr, &run_schema, config.charge.bat_capacity_kwh)?
     };
