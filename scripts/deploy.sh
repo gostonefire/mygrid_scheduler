@@ -87,6 +87,13 @@ run_as_user() {
     exit $EXIT_CODE
   fi
 
+  cp "./config/consumption_diagram.toml" "$HOME/$APP_DIR/config/" >> "$SUB_SCRIPT_LOG" 2>&1
+  EXIT_CODE=$?
+  if [ $EXIT_CODE -ne 0 ]; then
+    echo "could not copy ./config/consumption_diagram.toml to $HOME/$APP_DIR/config/..."
+    exit $EXIT_CODE
+  fi
+
   cp "./systemd/$SERVICE_NAME.service" "$HOME/$APP_DIR/" >> "$SUB_SCRIPT_LOG" 2>&1
   EXIT_CODE=$?
   if [ $EXIT_CODE -ne 0 ]; then
