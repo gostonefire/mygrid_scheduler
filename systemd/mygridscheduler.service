@@ -1,0 +1,16 @@
+[Unit]
+Description=Scheduler for MyGrid
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /home/petste/MyGridScheduler/start.sh
+WorkingDirectory=/home/petste/MyGridScheduler/
+StandardOutput=inherit
+StandardError=inherit
+User=petste
+
+LoadCredential=fox_ess_api_key:/etc/credstore/fox_ess_api_key
+LoadCredential=fox_ess_inverter_sn:/etc/credstore/fox_ess_inverter_sn
+LoadCredential=mail_smtp_user:/etc/credstore/mail_smtp_user
+LoadCredential=mail_smtp_password:/etc/credstore/mail_smtp_password
+

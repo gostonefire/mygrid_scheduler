@@ -1,0 +1,73 @@
+[geo_ref]
+lat = 56.22332313734338      # Latitude of the PV
+long = 15.658393416666142    # Longitude of the PV
+
+[consumption]
+min_avg_load = 200.0         # Estimated idle household power consumption
+max_avg_load = 2500.0        # Estimated max continous household heating power
+curve = [[-4.0, 1.0],[-2.0, 0.5],[0.0, 0.4],[6.0, 0.25],[18.0, 0.0]] # Power consumption curve given ambient temperature [[temperature, index 0.0-1.0]...]
+                                                                     # Index 1.0 must sit on lowest temp, index 0.0 must sit on highest temp.
+[production]
+panel_power = 500.0          # Expected max output from one single PV panel
+panel_slope = 40.0           # Panels (roof) slope
+panel_east_azm = -82.5       # East side panels (house) azimuth from south negative east
+panel_temp_red = 0.4         # Panel power reduction (%) per degree above spec power generation temperature (25 degree celcius)
+tau = 3.0                    # Panel temperature sun boost lag coefficient (hours)
+tau_down = 4.0               # Panel temperature cooling lag coefficient (hours)
+k_gain = 70.0                # Panel sun boost factor (degree celcius)
+iam_factor = 0.8             # Sun incidence angle modifier flatness factor
+start_azm_elv = [[0.0,12.0],[90.0,6.5],[106.0,15.0],[133.0,8.0]]  # Obstacle windows sunrise [[azimuth start, elevation]...]
+stop_azm_elv = [[180.0,5.0]]                                      # Obstacle windows sunset [[azimuth start, elevation]...]
+cloud_impact_factor = 0.75   # When cloudy, power is reduced by up to this factor
+low_clouds_factor = 1.0      # How much lcc_mean from SMHI can block PV power on max cloud index (0-8)
+mid_clouds_factor = 0.5      # How much mcc_mean from SMHI can block PV power on max cloud index (0-8)
+high_clouds_factor = 0.25    # How much hcc_mean from SMHI can block PV power on max cloud index (0-8)
+
+[charge]
+bat_capacity_kwh = 16.59     # New battery total capacity (i.e. with SoH at 100%)
+charge_kwh_hour = 1.5        # Typical charging power per time unit from grid
+charge_efficiency = 0.9      # Loss when charging is typical 10% (slightly lower in perfect conditions)
+discharge_efficiency = 0.9   # Loss when discharging is typical 10% (slightly lower in perfect conditions)
+
+[tariff_fees]
+# Power grid fees (öre/kWh, exl. VAT)
+variable_fee           = 25.30
+spot_fee_percentage    = 7.7
+energy_tax             = 43.90
+
+# Electricity trading fees  (öre/kWh, exl. VAT)
+swedish_power_grid     = 2.299
+balance_responsibility = 0.80
+electric_certificate   = 1.60
+guarantees_of_origin   = 3.00
+fixed                  = 2.40
+
+# Micro production price (öre/kWh, no VAT gained)
+production_price       = 7.5
+
+[scheduler]
+min_saving             = 1.0    # How much better in SEK the schedule needs to be compared to base schedule (full day Use)
+
+[fox_ess]
+
+[forecast]
+host              = "mygrid.gridfire.org"
+port              = 8081
+
+[mail]
+smtp_endpoint     = "email-smtp.eu-north-1.amazonaws.com"
+from              = "MyGridScheduler <peter.steneld@gridfire.org>"
+to                = "Peter Steneld <peter.steneld@gmail.com>"
+
+[files]
+schedule_dir      = "/home/petste/MyGridScheduler/schedule/"
+base_data_dir     = "/home/petste/MyGridScheduler/base_data/"
+cons_diagram      = "/home/petste/MyGridScheduler/config/consumption_diagram.toml"
+
+[general]
+# debug_run_time    = "2025-10-26T03:05:00+01:00"
+# debug_soc_soh_in  = [10,98]
+debug_dir         = "/home/petste/MyGridScheduler/debug/"
+log_path          = "/home/petste/MyGridScheduler/logs/mygrid.log"
+log_level         = "Info"
+log_to_stdout     = false

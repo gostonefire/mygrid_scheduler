@@ -6,6 +6,7 @@ SUB_SCRIPT_LOG=$3
 
 HOME="/home/petste"
 APP_DIR="MyGridScheduler"
+SERVICE_NAME="mygridscheduler"
 
 if [ -z "$REPO_NAME" ] || [ -z "$DEV_DIR" ] || [ -z "$SUB_SCRIPT_LOG" ]; then
   echo "Usage: $0 <repo_name> <dev_dir> <sub_script_log>"
@@ -72,6 +73,20 @@ run_as_user() {
     exit $EXIT_CODE
   fi
 
+  mkdir -p "$HOME/$APP_DIR/debug"
+  EXIT_CODE=$?
+  if [ $EXIT_CODE -ne 0 ]; then
+    echo "could not create $HOME/$APP_DIR/debug..."
+    exit $EXIT_CODE
+  fi
+
+  cp "./config/config.toml" "$HOME/$APP_DIR/config/" >> "$SUB_SCRIPT_LOG" 2>&1
+  EXIT_CODE=$?
+  if [ $EXIT_CODE -ne 0 ]; then
+    echo "could not copy ./config/config.toml to $HOME/$APP_DIR/config/..."
+    exit $EXIT_CODE
+  fi
+
   cp "./cron/start.sh" "$HOME/$APP_DIR/" >> "$SUB_SCRIPT_LOG" 2>&1
   EXIT_CODE=$?
   if [ $EXIT_CODE -ne 0 ]; then
@@ -98,5 +113,26 @@ if [ $EXIT_CODE -ne 0 ]; then
 fi
 
 ########## From here the script will be run as root, so add any commands such as systemctl etc. from here ##########
+cp "$HOME/$APP_DIR/$SERVICE_NAME.service" /lib/systemd/system/ >> "$SUB_SCRIPT_LOG" 2>&1
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+  echo "failed to copy $SERVICE_NAME.service to /lib/systemd/system/..."
+  exit $EXIT_CODE
+fi
 
+cp "$HOME/$APP_DIR/$SERVICE_NAME.timer" /lib/systemd/system/ >> "$SUB_SCRIPT_LOG" 2>&1
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+  echo "failed to copy $SERVICE_NAME.timer to /lib/systemd/system/..."
+  exit $EXIT_CODE
+fi
+
+systemctl daemon-reload
+
+sudo systemctl enable --now "$SERVICE_NAME.timer"
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+  echo "failed to enable and start $SERVICE_NAME.timer..."
+  exit $EXIT_CODE
+fi
 ########## until to here! ##########################################################################################

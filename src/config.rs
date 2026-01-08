@@ -67,7 +67,9 @@ pub struct Scheduler {
 
 #[derive(Deserialize)]
 pub struct FoxESS {
+    #[serde(default)]
     pub api_key: String,
+    #[serde(default)]
     pub inverter_sn: String,
 }
 
@@ -79,7 +81,9 @@ pub struct Forecast {
 
 #[derive(Deserialize)]
 pub struct MailParameters {
+    #[serde(default)]
     pub smtp_user: String,
+    #[serde(default)]
     pub smtp_password: String,
     pub smtp_endpoint: String,
     pub from: String,
@@ -97,6 +101,7 @@ pub struct Files {
 pub struct General {
     pub debug_run_time: Option<DateTime<Local>>,
     pub debug_soc_soh_in: Option<[u8;2]>,
+    pub debug_dir: Option<String>,
     pub log_path: String,
     pub log_level: LevelFilter,
     pub log_to_stdout: bool,

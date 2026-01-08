@@ -1,4 +1,5 @@
-use std::env;
+use std::{env, fs};
+use std::path::PathBuf;
 use log::info;
 use anyhow::Result;
 use thiserror::Error;
@@ -34,8 +35,17 @@ pub fn init() -> Result<(Config, Mgr), InitializationError> {
 
 
     // Load configuration
-    let config = load_config(&config_path)?;
+    let mut config = load_config(&config_path)?;
+    config.fox_ess.api_key = read_credential("fox_ess_api_key")?;
+    config.fox_ess.inverter_sn = read_credential("fox_ess_inverter_sn")?;
+    config.mail.smtp_user = read_credential("mail_smtp_user")?;
+    config.mail.smtp_password = read_credential("mail_smtp_password")?;
 
+    if config.general.debug_dir.is_some() {
+        config.files.schedule_dir = config.general.debug_dir.clone().unwrap();
+        config.files.base_data_dir = config.general.debug_dir.clone().unwrap();
+    }
+    
     // Setup logging
     let _ = setup_logger(&config.general.log_path, config.general.log_level, config.general.log_to_stdout)?;
 
@@ -64,6 +74,20 @@ pub fn init() -> Result<(Config, Mgr), InitializationError> {
     Ok((config, mgr))
 }
 
+/// Reads a credential from the file system supported by the credstore and
+/// given from systemd
+///
+/// # Arguments
+///
+/// * 'name' - name of the credential to read
+fn read_credential(name: &str) -> Result<String, InitializationError> {
+    let dir = env::var("CREDENTIALS_DIRECTORY")?;
+    let mut p = PathBuf::from(dir);
+    p.push(name);
+    let bytes = fs::read(p)?;
+    Ok(String::from_utf8(bytes)?.trim_end().to_string())
+}
+
 /// Error depicting errors that occur while initializing the scheduler
 ///
 #[derive(Debug, Error)]
@@ -74,4 +98,10 @@ pub enum InitializationError {
     SetupLoggerError(#[from] LoggerError),
     #[error("MailSetupError: {0}")]
     MailSetupError(#[from] MailError),
+    #[error("CredentialFileError: {0}")]
+    CredentialFileError(#[from] std::io::Error),
+    #[error("CredentialEnvError: {0}")]
+    CredentialEnvError(#[from] env::VarError),
+    #[error("CredentialUtf8Error: {0}")]
+    CredentialUtf8Error(#[from] std::string::FromUtf8Error),
 }

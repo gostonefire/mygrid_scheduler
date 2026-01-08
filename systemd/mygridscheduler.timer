@@ -1,0 +1,11 @@
+[Unit]
+Description=Run MyGrid Scheduler at 23:00
+
+[Timer]
+OnCalendar=*-*-* 15:00:00
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
+
