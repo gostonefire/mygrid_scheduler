@@ -67,7 +67,7 @@ cons_diagram      = "/home/petste/MyGridScheduler/config/consumption_diagram.tom
 [general]
 # debug_run_time    = "2025-10-26T03:05:00+01:00"
 # debug_soc_soh_in  = [10,98]
-debug_dir         = "/home/petste/MyGridScheduler/debug/"
+# debug_dir         = "/home/petste/MyGridScheduler/debug/"
 log_path          = "/home/petste/MyGridScheduler/logs/mygrid.log"
 log_level         = "Info"
 log_to_stdout     = false
