@@ -87,10 +87,24 @@ run_as_user() {
     exit $EXIT_CODE
   fi
 
-  cp "./cron/start.sh" "$HOME/$APP_DIR/" >> "$SUB_SCRIPT_LOG" 2>&1
+  cp "./systemd/$SERVICE_NAME.service" "$HOME/$APP_DIR/" >> "$SUB_SCRIPT_LOG" 2>&1
   EXIT_CODE=$?
   if [ $EXIT_CODE -ne 0 ]; then
-    echo "could not copy ./cron/start.sh to $HOME/$APP_DIR/..."
+    echo "could not copy ./systemd/$SERVICE_NAME.service to $HOME/$APP_DIR/..."
+    exit $EXIT_CODE
+  fi
+
+  cp "./systemd/$SERVICE_NAME.timer" "$HOME/$APP_DIR/" >> "$SUB_SCRIPT_LOG" 2>&1
+  EXIT_CODE=$?
+  if [ $EXIT_CODE -ne 0 ]; then
+    echo "could not copy ./systemd/$SERVICE_NAME.timer to $HOME/$APP_DIR/..."
+    exit $EXIT_CODE
+  fi
+
+  cp "./systemd/start.sh" "$HOME/$APP_DIR/" >> "$SUB_SCRIPT_LOG" 2>&1
+  EXIT_CODE=$?
+  if [ $EXIT_CODE -ne 0 ]; then
+    echo "could not copy ./systemd/start.sh to $HOME/$APP_DIR/..."
     exit $EXIT_CODE
   fi
 
