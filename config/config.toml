@@ -5,8 +5,8 @@ long = 15.658393416666142    # Longitude of the PV
 [consumption]
 min_avg_load = 200.0         # Estimated idle household power consumption
 max_avg_load = 2500.0        # Estimated max continous household heating power
-curve = [[-4.0, 1.0],[-2.0, 0.5],[0.0, 0.4],[6.0, 0.25],[18.0, 0.0]] # Power consumption curve given ambient temperature [[temperature, index 0.0-1.0]...]
-                                                                     # Index 1.0 must sit on lowest temp, index 0.0 must sit on highest temp.
+curve = [[-10.0, 1.0],[-4.0, 0.8],[-2.0, 0.5],[0.0, 0.5],[6.0, 0.25],[18.0, 0.0]] # Power consumption curve given ambient temperature [[temperature, index 0.0-1.0]...]
+                                                                                  # Index 1.0 must sit on lowest temp, index 0.0 must sit on highest temp.
 [production]
 panel_power = 500.0          # Expected max output from one single PV panel
 panel_slope = 40.0           # Panels (roof) slope
