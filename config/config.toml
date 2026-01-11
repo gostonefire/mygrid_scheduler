@@ -33,10 +33,10 @@ discharge_efficiency = 0.9   # Loss when discharging is typical 10% (slightly lo
 # Power grid fees (öre/kWh, exl. VAT)
 variable_fee           = 25.30
 spot_fee_percentage    = 7.7
-energy_tax             = 43.90
+energy_tax             = 36.0
 
 # Electricity trading fees  (öre/kWh, exl. VAT)
-swedish_power_grid     = 2.299
+swedish_power_grid     = 2.281
 balance_responsibility = 0.80
 electric_certificate   = 1.60
 guarantees_of_origin   = 3.00
