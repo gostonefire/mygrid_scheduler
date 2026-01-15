@@ -1,5 +1,5 @@
 use std::ops::Add;
-use chrono::{DateTime, DurationRound, NaiveDate, TimeDelta, TimeZone, Utc};
+use chrono::{DateTime, Datelike, DurationRound, TimeDelta, Utc};
 use anyhow::Result;
 use spa_sra::errors::SpaError;
 use spa_sra::spa::{Function, Input, SpaData};
@@ -59,12 +59,11 @@ impl PVProduction {
     /// * 'forecast' - a vector of hourly weather forecasts
     /// * 'day_start' - the start time of the day to calculate for
     /// * 'day_end' - the end time of the day to calculate for (non-inclusive)
-    /// * 'day_date' - the date to calculate for
-    pub fn estimate(&self, forecast: &ForecastValues, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate) -> Result<Vec<f64>, ProductionError> {
+    pub fn estimate(&self, forecast: &ForecastValues, day_start: DateTime<Utc>, day_end: DateTime<Utc>) -> Result<Vec<f64>, ProductionError> {
         let minutes = (day_end - day_start).num_minutes() as usize;
         let temp = forecast.minute_values(minutes, |f| f.temp)?;
         let cloud_factor = forecast.minute_values(minutes, |f| f.cloud_factor)?;
-        let power_per_minute = self.day_power(day_start, day_end, day_date, &temp, &cloud_factor)?;
+        let power_per_minute = self.day_power(day_start, day_end, &temp, &cloud_factor)?;
         
         Ok(power_per_minute)
     }
@@ -75,43 +74,48 @@ impl PVProduction {
     ///
     /// * 'day_start' - the start time of the day to calculate for
     /// * 'day_end' - the end time of the day to calculate for (non-inclusive)
-    /// * 'day_date' - date to calculate for
     /// * 'temp' - ambient temperature in degrees Celsius
-    fn day_power(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate, temp: &[f64], cloud_factor: &[f64]) -> Result<Vec<f64>, ProductionError> {
+    fn day_power(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, temp: &[f64], cloud_factor: &[f64]) -> Result<Vec<f64>, ProductionError> {
         let minutes = (day_end - day_start).num_minutes() as usize;
         let mut power: Vec<f64> = vec![0.0;minutes];
-        let sp = self.solar_positions(day_start, day_end, day_date)?;
+        let sp = self.solar_positions(day_start, day_end)?;
         let sun_intensity_factor = sun_intensity_factor(&sp.zenith);
-        let (up, down) = self.full_sun_minute(&sp);
-        let roof_temperature_east: Vec<f64> = self.roof_temperature(Some(up), &temp, &sp.incidence_east, &sun_intensity_factor)?;
-        let roof_temperature_west: Vec<f64> = self.roof_temperature(Some(up), &temp, &sp.incidence_west, &sun_intensity_factor)?;
+        let up_down = self.full_sun_minute(&sp);
+        let roof_temperature_east: Vec<f64> = self.roof_temperature(&up_down, &temp, &sp.incidence_east, &sun_intensity_factor)?;
+        let roof_temperature_west: Vec<f64> = self.roof_temperature(&up_down, &temp, &sp.incidence_west, &sun_intensity_factor)?;
 
-        // Loop through the day with a one-minute incrementation
-        for minute_of_day in sp.sunrise..sp.sunset {
-            // Calculate factor on power production given sun incidence angles
-            let inc_red_e = schlick_iam(sp.incidence_east[minute_of_day], self.iam_factor);
-            let inc_red_w = schlick_iam(sp.incidence_west[minute_of_day], self.iam_factor);
-
-            // Calculate power reduction due to high temperatures
-            let temp_red_e = 1.0 - (roof_temperature_east[minute_of_day].max(0.0) - 25.0) * self.panel_temp_red / 100.0;
-            let temp_red_w = 1.0 - (roof_temperature_west[minute_of_day].max(0.0) - 25.0) * self.panel_temp_red / 100.0;
-
-            // Calculate power reduction due to the atmospheric effect given sun altitude relative to zenith
-            let ame_red = sun_intensity_factor[minute_of_day];
-
-            // Calculate total panel power where each side is reduced given the above power reduction factors
-            let pwr = self.panel_power * 12.0 * inc_red_e * temp_red_e + self.panel_power * 15.0 * inc_red_w * temp_red_w;
-
-            // Calculate the shadow factors for the given minute of the day
-            let shadow_up = exp_increase(minute_of_day, sp.sunrise, up, 10);
-            let shadow_down = exp_decrease(minute_of_day, down, sp.sunset, 4);
-
-            // Calculate the cloud factor for the given minute of the day
-            let cloud_factor = cloud_factor[minute_of_day].clamp(0.0, 1.0) * self.cloud_impact_factor + (1.0 - self.cloud_impact_factor);
-
-            // Record the estimated power at the given point in time
-            power[minute_of_day] = pwr * ame_red * shadow_up * shadow_down * cloud_factor;
+        if sp.rise_set.len() != up_down.len() {
+            return Err(ProductionError::UnequalLengths("between rise_set and up_down vectors".to_string()));
         }
+        
+        // Loop through the day with a one-minute incrementation
+        sp.rise_set.into_iter().zip(up_down).for_each(|((sunrise, sunset), (up, down))| {
+            for minute_of_day in sunrise..sunset {
+                // Calculate the factor on power production given sun incidence angles
+                let inc_red_e = schlick_iam(sp.incidence_east[minute_of_day], self.iam_factor);
+                let inc_red_w = schlick_iam(sp.incidence_west[minute_of_day], self.iam_factor);
+
+                // Calculate power reduction due to high temperatures
+                let temp_red_e = 1.0 - (roof_temperature_east[minute_of_day].max(0.0) - 25.0) * self.panel_temp_red / 100.0;
+                let temp_red_w = 1.0 - (roof_temperature_west[minute_of_day].max(0.0) - 25.0) * self.panel_temp_red / 100.0;
+
+                // Calculate power reduction due to the atmospheric effect given sun altitude relative to zenith
+                let ame_red = sun_intensity_factor[minute_of_day];
+
+                // Calculate total panel power where each side is reduced given the above power reduction factors
+                let pwr = self.panel_power * 12.0 * inc_red_e * temp_red_e + self.panel_power * 15.0 * inc_red_w * temp_red_w;
+
+                // Calculate the shadow factors for the given minute of the day
+                let shadow_up = exp_increase(minute_of_day, sunrise, up, 10);
+                let shadow_down = exp_decrease(minute_of_day, down, sunset, 4);
+
+                // Calculate the cloud factor for the given minute of the day
+                let cloud_factor = cloud_factor[minute_of_day].clamp(0.0, 1.0) * self.cloud_impact_factor + (1.0 - self.cloud_impact_factor);
+
+                // Record the estimated power at the given point in time
+                power[minute_of_day] = pwr * ame_red * shadow_up * shadow_down * cloud_factor;
+            }
+        });
 
         Ok(power)
     }
@@ -122,11 +126,10 @@ impl PVProduction {
     ///
     /// * 'day_start' - the start time of the day to calculate for
     /// * 'day_end' - the end time of the day to calculate for (non-inclusive)
-    /// * 'day_date' - the date on which sunrise and sunset occur
-    fn solar_positions(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate) -> Result<SolarPositions, SpaError> {
+    fn solar_positions(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>) -> Result<SolarPositions, SpaError> {
         let minutes = (day_end - day_start).num_minutes() as usize;
-        let day_date_utc = TimeZone::from_utc_datetime(&Utc, &day_date.and_hms_opt(0,0,0).unwrap());
-        let mut input = Input::from_date_time(day_date_utc);
+        let mut current_date = day_start;
+        let mut input = Input::from_date_time(current_date);
         input.latitude = self.lat;
         input.longitude = self.long;
         input.pressure = 1013.0;
@@ -137,12 +140,6 @@ impl PVProduction {
         input.function = Function::SpaZaRts;
 
         let mut spa = SpaData::new(input);
-        spa.spa_calculate()?;
-
-        let sunrise = spa.get_sunrise().duration_round(TimeDelta::minutes(1)).unwrap();
-        let sunset = spa.get_sunset().duration_round(TimeDelta::minutes(1)).unwrap();
-
-        spa.input.function = Function::SpaZaInc;
 
         let mut incidence_east: Vec<f64> = vec![90.0; minutes];
         let mut incidence_west: Vec<f64> = vec![90.0; minutes];
@@ -150,8 +147,15 @@ impl PVProduction {
         let mut azimuth: Vec<f64> = vec![0.0; minutes];
         let mut elevation: Vec<f64> = vec![0.0; minutes];
 
+        let mut rise_set: Vec<(usize, usize)> = Vec::new();
+        let mut time_of_interest = day_start;
+        let (mut sunrise, mut sunset) = sunrise_sunset(current_date, day_start, day_end, &mut spa, &mut rise_set)?;
+
         for toi in 0..minutes {
-            let time_of_interest = day_start.add(TimeDelta::minutes(toi as i64));
+            if time_of_interest.ordinal0() != current_date.ordinal0() {
+                current_date = time_of_interest;
+                (sunrise, sunset) = sunrise_sunset(current_date, day_start, day_end, &mut spa, &mut rise_set)?;
+            }
 
             if time_of_interest >= sunrise && time_of_interest < sunset {
                 spa.input.date_time(time_of_interest);
@@ -168,7 +172,7 @@ impl PVProduction {
                 spa.spa_calculate()?;
                 incidence_west[toi] = spa.spa_za_inc.incidence.min(90.0);
             }
-
+            time_of_interest = day_start.add(TimeDelta::minutes(toi as i64));
         }
 
         Ok(SolarPositions {
@@ -177,8 +181,7 @@ impl PVProduction {
             azimuth,
             elevation,
             zenith,
-            sunrise: (sunrise - day_start).num_minutes() as usize,
-            sunset: (sunset - day_start).num_minutes() as usize,
+            rise_set,
         })
     }
 
@@ -187,7 +190,7 @@ impl PVProduction {
     /// # Arguments
     ///
     /// * 'solar_positions' - solar positions during the day
-    fn full_sun_minute(&self, solar_positions: &SolarPositions) -> (usize, usize) {
+    fn full_sun_minute(&self, solar_positions: &SolarPositions) -> Vec<(usize, usize)> {
         let mut up: usize = 0;
         let mut down: usize = 0;
 
@@ -213,23 +216,28 @@ impl PVProduction {
             }
         }
 
-        for m in solar_positions.sunrise..solar_positions.sunset {
-            if solar_positions.azimuth[m] < 180.0 {
-                for up_obst in up_pairs.iter() {
-                    if up == 0 && solar_positions.azimuth[m] >= up_obst.0 && solar_positions.azimuth[m] < up_obst.1 && solar_positions.elevation[m] > up_obst.2 {
-                        up = m;
+        let mut up_down: Vec<(usize,usize)> = Vec::new();
+        solar_positions.rise_set.iter().for_each(|(sunrise, sunset)| {
+            for m in *sunrise..*sunset {
+                if solar_positions.azimuth[m] < 180.0 {
+                    for up_obst in up_pairs.iter() {
+                        if up == 0 && solar_positions.azimuth[m] >= up_obst.0 && solar_positions.azimuth[m] < up_obst.1 && solar_positions.elevation[m] > up_obst.2 {
+                            up = m;
+                        }
                     }
-                }
-            } else {
-                for down_obst in down_pairs.iter() {
-                    if down == 0 && solar_positions.azimuth[m] >= down_obst.0 && solar_positions.azimuth[m] < down_obst.1 && solar_positions.elevation[m] < down_obst.2 {
-                        down = m;
+                } else {
+                    for down_obst in down_pairs.iter() {
+                        if down == 0 && solar_positions.azimuth[m] >= down_obst.0 && solar_positions.azimuth[m] < down_obst.1 && solar_positions.elevation[m] < down_obst.2 {
+                            down = m;
+                        }
                     }
                 }
             }
-        }
 
-        (up,down)
+            up_down.push((up, down));
+        });
+
+        up_down
     }
 
     /// Calculates roof temperature given ambient temperature and effect from direct sunlight
@@ -240,7 +248,7 @@ impl PVProduction {
     /// * 'temp' - ambient temperature in degrees Celsius
     /// * 'inc_deg' - sun incidence on panels in degrees
     /// * 'sif' - sun intensity factor
-    fn roof_temperature(&self, up: Option<usize>, temp: &[f64], inc_deg: &[f64], sif: &[f64]) -> Result<Vec<f64>, ProductionError> {
+    fn roof_temperature(&self, up: &Vec<(usize, usize)>, temp: &[f64], inc_deg: &[f64], sif: &[f64]) -> Result<Vec<f64>, ProductionError> {
 
         let t_roof = roof_thermodynamics(
             temp,
@@ -255,7 +263,7 @@ impl PVProduction {
             up)?;
 
         let mut result: Vec<f64> = vec![0.0; temp.len()];
-        (0..1440)
+        (0..temp.len())
             .into_iter()
             .for_each(|i| {
                 result[i] = t_roof[i];
@@ -263,6 +271,55 @@ impl PVProduction {
 
         Ok(result)
     }
+}
+
+/// Calculates the sunrise and sunset times for a given date.
+/// Also, it adds the rise and set times to the rise_set vector.
+///
+/// # Arguments
+///
+/// * 'date_time' - the date for which to calculate
+/// * 'day_start' - the start time of the day to calculate for
+/// * 'day_end' - the end time of the day to calculate for (non-inclusive)
+/// * 'spa' - the initialized SpaData struct to use in calculations
+/// * 'rise_set' - the vector to which rise and set times will be added
+fn sunrise_sunset(
+    date_time: DateTime<Utc>,
+    day_start: DateTime<Utc>,
+    day_end: DateTime<Utc>,
+    spa: &mut SpaData<Utc>,
+    rise_set: &mut Vec<(usize, usize)>
+) -> Result<(DateTime<Utc>, DateTime<Utc>), SpaError>
+{
+    spa.input.date_time(date_time);
+    spa.input.function = Function::SpaZaRts;
+
+    spa.spa_calculate()?;
+
+    let sunrise = spa.get_sunrise().duration_round(TimeDelta::minutes(1)).unwrap();
+    let sunset = spa.get_sunset().duration_round(TimeDelta::minutes(1)).unwrap();
+
+    // Clamp sunrise/sunset to the day's boundaries to handle cases where they fall outside
+    let effective_rise = sunrise.clamp(day_start, day_end);
+    let effective_set = sunset.clamp(day_start, day_end);
+
+    let (rise_minute, set_minute) = if sunrise > day_end || sunset < day_start {
+        // Sun is never up during this specific day window
+        (-1, -1)
+    } else {
+        (
+            (effective_rise - day_start).num_minutes(),
+            (effective_set - day_start).num_minutes(),
+        )
+    };
+
+    if rise_minute >= 0 && set_minute >= 0 {
+        rise_set.push((rise_minute as usize, set_minute as usize));
+    }
+
+    spa.input.function = Function::SpaZaInc;
+
+    Ok((sunrise, sunset))
 }
 
 /// Calculates an exponential increase for v between v0 and vn
@@ -381,7 +438,7 @@ fn roof_thermodynamics(
     clouds: Option<&[f64]>,
     t0: Option<f64>,
     tau_down: Option<f64>,
-    up: Option<usize>,
+    up_down: &Vec<(usize, usize)>,
 ) -> Result<Vec<f64>, ProductionError> {
     let n = t_air.len();
     if n == 0 {
@@ -410,7 +467,8 @@ fn roof_thermodynamics(
     }
 
     let mut t_roof = vec![0.0; n];
-    let t_air_0 = if up.is_some() {
+    
+    let t_air_0 = if up_down.iter().find(|(u, d)| *u <= 0 && *d > 0).is_none() {
         t_air[0] - 4.0
     } else {
         t_air[0]
@@ -418,27 +476,20 @@ fn roof_thermodynamics(
 
     t_roof[0] = t0.unwrap_or(t_air_0);
     let tau_cool = tau_down.unwrap_or(tau);
-    let up_delay = up.unwrap_or(0);
 
     for k in 1..n {
         // clouds[k] defaults to 1.0 if not provided
         let cloud_k = clouds.map_or(1.0, |c| c[k]);
 
         // Use projection by incidence: cos(inc_rad), clamped to [0, +inf) at 0.
-        let inc_deg_k = if k <= up_delay {
-            90.0
+        let (inc_deg_k, t_air_k) = if up_down.iter().find(|(u, d)| *u <= k && *d > k).is_none() {
+            (90.0, t_air[k] - 4.0)
         } else {
-            inc_deg[k]
+            (inc_deg[k], t_air[k])
         };
 
         let projection = inc_deg_k.to_radians().cos().max(0.0);
         let sun_boost = k_gain * projection * cloud_k; // [°C]
-
-        let t_air_k = if k <= up_delay {
-            t_air[k] - 4.0
-        } else {
-            t_air[k]
-        };
 
         let t_eq = t_air_k + sun_boost * sif[k];
 
@@ -457,8 +508,7 @@ struct SolarPositions {
     azimuth: Vec<f64>,
     elevation: Vec<f64>,
     zenith: Vec<f64>,
-    sunrise: usize,
-    sunset: usize,
+    rise_set: Vec<(usize, usize)>,
 }
 
 /// Error depicting errors that occur while estimating power production
@@ -471,4 +521,6 @@ pub enum ProductionError {
     SolarPositionsError(#[from] SpaError),
     #[error("ThermodynamicsError: {0}")]
     ThermodynamicsError(String),
+    #[error("UnequalLengths: {0}")]
+    UnequalLengths(String),
 }

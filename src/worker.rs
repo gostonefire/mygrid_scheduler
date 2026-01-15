@@ -1,6 +1,6 @@
 use std::{fs, thread};
 use std::ops::Add;
-use chrono::{DateTime, Duration, DurationRound, Local, NaiveDate, NaiveDateTime, TimeDelta, Timelike, Utc};
+use chrono::{DateTime, Duration, DurationRound, Local, NaiveDateTime, TimeDelta, Timelike, Utc};
 use glob::glob;
 use log::info;
 use anyhow::Result;
@@ -29,15 +29,20 @@ pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option
         Local::now()
     };
 
-    let run_schema = get_schedule_start_schema(run_start)?;
+    let run_schema = get_schedule_start_schema(run_start
+        .duration_round(TimeDelta::minutes(15))
+        .map_err(|e| WorkerError::RunSchemaError(format!("run_start date: {}", e.to_string())))?
+    )?;
 
     info!("Run start: {}, Schedule Start: {}", run_schema.run_start, run_schema.schedule_start);
 
-    // Estimate how much battery capacity we lose between the run start and the schedule start
+    // Get current SoC and SoH from Fox Cloud
     let (start_soc, soh) = if let Some(soc_soh) = debug_soc_soh_in {
         (soc_soh[0], soc_soh[1])
     } else {
-        estimate_soc_in(mgr, &run_schema, config.charge.bat_capacity_kwh)?
+        retry!(||mgr.fox.get_current_soc_soh())
+            .map_err(|e| WorkerError::EstimateSocError(format!("error getting current soc: {}", e.to_string())))?
+
     };
 
     // Calculate the new schedule
@@ -54,63 +59,6 @@ pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option
     Ok(())
 }
 
-/// Tries to estimate what the SoC will be at a specific time, also returns SoH
-///
-/// # Arguments
-///
-/// * 'mgr' - struct with managers
-/// * 'run_schema' - a schema with a schedule for running the scheduler, and time converted to Utc
-/// * 'bat_capacity_kwh' - new battery capacity in kWh
-fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, bat_capacity_kwh: f64) -> Result<(u8, u8), WorkerError> {
-    // Get the current state of charge from Fox Cloud
-    let (soc_in, soh) = retry!(||mgr.fox.get_current_soc_soh())
-        .map_err(|e| WorkerError::EstimateSocError(format!("error getting current soc: {}", e.to_string())))?;
-
-    let soc_kwh = bat_capacity_kwh * (soh as f64 / 100.0) / 100.0;
-
-    // Loop through all the dates and calculate the power used during the day and sum it up
-    let mut power_used = 0f64;
-    let mut minutes: usize = 0;
-
-    {
-        // Calculate production and consumption during the day that run_start falls into
-        let forecast = retry!(||mgr.forecast.new_forecast(run_schema.run_day_start, run_schema.run_day_end))
-            .map_err(|e| WorkerError::EstimateSocError(format!("error getting forecast: {}", e.to_string())))?;
-        let production = mgr.pv.estimate(&forecast, run_schema.run_day_start, run_schema.run_day_end, run_schema.run_date)
-            .map_err(|e| WorkerError::EstimateSocError(format!("error estimating production: {}", e.to_string())))?;
-        let consumption = mgr.cons.estimate(&forecast, run_schema.local_offset);
-
-        // Calculate the power used in the time span
-        // The power used is divided by the number of minutes to get the average power used per hour
-        power_used += (run_schema.run_date_1.run_start_minute..run_schema.run_date_1.run_end_minute).fold(0f64, |acc, i|
-            acc + (production[i] - consumption[i])) / 60.0 / 1000.0;
-
-        minutes += run_schema.run_date_1.run_end_minute - run_schema.run_date_1.run_start_minute;
-    }
-
-    if let Some(schedule_date) = &run_schema.run_date_2 {
-        // Calculate production and consumption in the time span between schedule day start and schedule start
-        let forecast = retry!(||mgr.forecast.new_forecast(run_schema.schedule_day_start, run_schema.schedule_day_end))
-            .map_err(|e| WorkerError::EstimateSocError(format!("error getting forecast: {}", e.to_string())))?;
-        let production = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date)
-            .map_err(|e| WorkerError::EstimateSocError(format!("error estimating production: {}", e.to_string())))?;
-        let consumption = mgr.cons.estimate(&forecast, run_schema.local_offset);
-
-        // Calculate the power used in the time span
-        // The power used is divided by the number of minutes to get the average power used per hour
-        power_used += (schedule_date.run_start_minute..schedule_date.run_end_minute).fold(0f64, |acc, i|
-            acc + (production[i] - consumption[i])) / 60.0 / 1000.0;
-
-        minutes += schedule_date.run_end_minute - schedule_date.run_start_minute;
-    }
-
-    // Calculate the expected SoC at the start of the schedule.
-    // 10% is the lowest SoC that the battery accepts; anything below is considered 10%
-    let start_soc = (soc_in as i8 + (power_used / soc_kwh) as i8).max(10) as u8;
-    info!("Soc In: {}, Start SoC: {}, Power Used: {}, Minutes: {}", soc_in, start_soc, power_used, minutes);
-    Ok((start_soc, soh))
-}
-
 /// Calculates a new schedule
 ///
 /// # Arguments
@@ -121,23 +69,23 @@ fn estimate_soc_in(mgr: &mut Mgr, run_schema: &RunSchema, bat_capacity_kwh: f64)
 /// * 'soh' - battery's current state of health
 /// * 'run_schema' - a schema with a schedule for running the scheduler, and time converted to Utc
 fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, soh: u8, run_schema: &RunSchema) -> Result<(SchedulerResult, BaseData), WorkerError> {
-    let forecast = retry!(||mgr.forecast.new_forecast(run_schema.schedule_day_start, run_schema.schedule_day_end))
+    let forecast = retry!(||mgr.forecast.new_forecast(run_schema.run_start, run_schema.schedule_day_end))
         .map_err(|e| WorkerError::GetScheduleError(format!("error getting forecast: {}", e.to_string())))?;
-    let pv_estimate = mgr.pv.estimate(&forecast, run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date)
+    let pv_estimate = mgr.pv.estimate(&forecast, run_schema.run_start, run_schema.schedule_day_end)
         .map_err(|e| WorkerError::GetScheduleError(format!("error estimating production: {}", e.to_string())))?;
     let cons_estimate = mgr.cons.estimate(&forecast, run_schema.local_offset);
 
-    let production = MinuteValues::new(&pv_estimate, run_schema.schedule_day_start).time_groups(15, true);
-    let consumption = MinuteValues::new(&cons_estimate, run_schema.schedule_day_start).time_groups(15, true);
-    let tariffs = retry!(||mgr.nordpool.get_tariffs(run_schema.schedule_day_start, run_schema.schedule_day_end, run_schema.schedule_date))
+    let production = MinuteValues::new(&pv_estimate, run_schema.run_start).time_groups(15, true);
+    let consumption = MinuteValues::new(&cons_estimate, run_schema.run_start).time_groups(15, true);
+    let tariffs = retry!(||mgr.nordpool.get_tariffs(run_schema.run_start, run_schema.schedule_day_end))
         .map_err(|e| WorkerError::GetScheduleError(format!("error getting tariffs: {}", e.to_string())))?;
 
     let mut scheduler = Schedule::new(config, soh);
-    let pd = Schedule::preformat_data(&tariffs, &production.data, &consumption.data, run_schema.schedule_start, run_schema.schedule_day_end)
+    let pd = Schedule::preformat_data(&tariffs, &production.data, &consumption.data, run_schema.run_start, run_schema.schedule_day_end)
         .map_err(|e| WorkerError::GetScheduleError(format!("error preformatting data: {}", e.to_string())))?;
     info!("Time blocks to schedule for: {}", pd.tariffs.len());
 
-    let sr = scheduler.update_scheduling(&pd.tariffs, &pd.cons, &pd.net_prod, soc_in, run_schema.schedule_start);
+    let sr = scheduler.update_scheduling(&pd.tariffs, &pd.cons, &pd.net_prod, soc_in, run_schema.run_start, run_schema.schedule_start);
 
     let base_data = BaseData {
         date_time: run_schema.schedule_day_start,
@@ -191,42 +139,16 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> Result<RunSchema, Wo
     };
 
     let run_start_utc = run_start.with_timezone(&Utc);
-    let (run_day_start_utc, run_day_end_utc) = get_utc_day_start(run_start_utc, 0);
-    let run_date_naive = run_start.date_naive();
 
     let schedule_start_utc = schedule_start.with_timezone(&Utc);
     let (schedule_day_start_utc, schedule_day_end_utc) = get_utc_day_start(schedule_start_utc, 0);
-    let schedule_date_naive = schedule_start.date_naive();
-
-    // Calculate the time span between the run start and the schedule start
-    // This can involve one or two days, depending on whether the run start falls into the same day as the schedule start
-    let mut run_date_1: RunMinutes = RunMinutes {
-        run_start_minute: 1440 - (run_day_end_utc - run_start_utc).num_minutes() as usize,
-        run_end_minute: 1440,
-    };
-    let mut run_date_2: Option<RunMinutes> = None;
-
-    if schedule_start_utc < run_day_end_utc {
-        run_date_1.run_end_minute = 1440 - (run_day_end_utc - schedule_start_utc).num_minutes() as usize;
-    } else if schedule_start_utc >  run_day_end_utc {
-        run_date_2 = Some(RunMinutes {
-            run_start_minute: 0,
-            run_end_minute: 1440 - (schedule_day_end_utc - schedule_start_utc).num_minutes() as usize,
-        });
-    };
 
     Ok(RunSchema {
         run_start: run_start_utc,
-        run_day_start: run_day_start_utc,
-        run_day_end: run_day_end_utc,
-        run_date: run_date_naive,
         schedule_start: schedule_start_utc,
         schedule_day_start: schedule_day_start_utc,
         schedule_day_end: schedule_day_end_utc,
-        schedule_date: schedule_date_naive,
         local_offset: run_start.offset().local_minus_utc() as i64,
-        run_date_1,
-        run_date_2,
     })
 }
 
@@ -325,23 +247,12 @@ fn get_utc_day_start(date_time: DateTime<Utc>, day_index: i64) -> (DateTime<Utc>
     (start.with_timezone(&Utc), end.with_timezone(&Utc))
 }
 
-struct RunMinutes {
-    run_start_minute: usize,
-    run_end_minute: usize,
-}
-
 struct RunSchema {
     run_start: DateTime<Utc>,
-    run_day_start: DateTime<Utc>,
-    run_day_end: DateTime<Utc>,        // Non-inclusive
-    run_date: NaiveDate,
     schedule_start: DateTime<Utc>,
     schedule_day_start: DateTime<Utc>,
     schedule_day_end: DateTime<Utc>,   // Non-Inclusive
-    schedule_date: NaiveDate,
     local_offset: i64,
-    run_date_1: RunMinutes,
-    run_date_2: Option<RunMinutes>,
 }
 
 /// Error depicting errors that occur while running the scheduler

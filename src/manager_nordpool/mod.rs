@@ -1,7 +1,7 @@
 mod models;
 
 use std::time::Duration;
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, DurationRound, TimeDelta, Utc};
 use ureq::Agent;
 use anyhow::Result;
 use thiserror::Error;
@@ -51,10 +51,16 @@ impl NordPool {
     ///
     /// * 'day_start' - the start time of the day to retrieve prices for
     /// * 'day_end' - the end time of the day to retrieve prices for (non-inclusive)
-    /// * 'day_date' - the date to retrieve prices for
-    pub fn get_tariffs(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>, day_date: NaiveDate) -> Result<Vec<TariffValue>, NordPoolError> {
-        let day_date_utc = TimeZone::from_utc_datetime(&Utc, &day_date.and_hms_opt(0,0,0).unwrap());
-        let result = self.get_day_tariffs(day_start, day_end, day_date_utc)?;
+    pub fn get_tariffs(&self, day_start: DateTime<Utc>, day_end: DateTime<Utc>) -> Result<Vec<TariffValue>, NordPoolError> {
+
+        let mut day_date_utc = day_end.duration_trunc(TimeDelta::days(1)).unwrap();
+        let mut result = self.get_day_tariffs(day_start, day_end, day_date_utc)?;
+        while day_start < result.first().unwrap().valid_time {
+            day_date_utc = day_date_utc - TimeDelta::days(1);
+            let mut new_day = self.get_day_tariffs(day_start, day_end, day_date_utc)?;
+            new_day.append(&mut result);
+            result = new_day;
+        }
 
         Ok(result)
     }
@@ -91,7 +97,12 @@ impl NordPool {
             .read_to_string()?;
 
         let tariffs: Tariffs = serde_json::from_str(&json)?;
-        self.tariffs_to_vec(&tariffs, day_start, day_end)
+        let result = self.tariffs_to_vec(&tariffs, day_start, day_end)?;
+        if result.is_empty() {
+            Err(NordPoolError::NoContentError)? 
+        } else {
+            Ok(result)
+        }
     }
 
     /// Transforms the Tariffs struct to a plain vector of prices

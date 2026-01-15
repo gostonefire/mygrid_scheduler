@@ -221,8 +221,9 @@ impl<'a> Schedule<'a> {
     /// * 'cons' - consumption estimates per quarter
     /// * 'soc_in' - any residual charge to bear in to the new schedule (stated as soc 0-100)
     /// * 'net_prod' - net production estimates per quarter (production - consumption)
+    /// * 'run_start' - the date time when the scheduler run starts (to calculate SoC for schedule start)
     /// * 'start_time' - the date time when the schedule shall start
-    pub fn update_scheduling(&mut self, tariffs: &'a[f64], cons: &'a[f64], net_prod: &'a[f64], soc_in: u8, start_time: DateTime<Utc>) -> SchedulerResult {
+    pub fn update_scheduling(&mut self, tariffs: &'a[f64], cons: &'a[f64], net_prod: &'a[f64], soc_in: u8, run_start: DateTime<Utc>, start_time: DateTime<Utc>) -> SchedulerResult {
         let charge_in = (soc_in.max(10) - 10) as f64 * self.soc_kwh;
 
         self.tariffs = tariffs;
@@ -230,8 +231,9 @@ impl<'a> Schedule<'a> {
         self.net_prod = net_prod;
         self.schedule_length = tariffs.len();
 
-        let block_collection = self.parallel_search(charge_in);
-        let blocks = create_result_blocks(block_collection.blocks, self.soc_kwh, start_time);
+        let pre_blocks = (start_time - run_start).num_minutes() / 15;
+        let block_collection = self.parallel_search(charge_in, pre_blocks as usize);
+        let blocks = create_result_blocks(block_collection.blocks, pre_blocks as usize, self.soc_kwh, start_time);
 
         SchedulerResult {
             base_cost: self.base_cost,
@@ -247,12 +249,15 @@ impl<'a> Schedule<'a> {
     /// # Arguments
     /// 
     /// * 'charge_in' - the charge in the battery when the schedule starts
-    fn parallel_search(&mut self, charge_in: f64) -> BlockCollection {
-        let mut best_record: BlockCollection = self.create_base_block_collection(charge_in);
+    /// * 'pre_blocks' - the number of blocks to skip
+    fn parallel_search(&mut self, charge_in: f64, pre_blocks: usize) -> BlockCollection {
+        let pm = self.update_for_pv(BlockType::Use, 0, pre_blocks, charge_in);
+
+        let mut best_record: BlockCollection = self.create_base_block_collection(pm.charge_out, pre_blocks);
         let base_record = best_record.clone();
 
-        let bcs = (0..self.schedule_length).into_par_iter()
-            .map(|seek_first_charge| self.seek_best(charge_in, seek_first_charge, best_record.clone()))
+        let bcs = (pre_blocks..self.schedule_length).into_par_iter()
+            .map(|seek_first_charge| self.seek_best(pm.charge_out, pre_blocks, seek_first_charge, best_record.clone()))
             .collect::<Vec<BlockCollection>>();
 
         for bc in bcs {
@@ -281,13 +286,14 @@ impl<'a> Schedule<'a> {
     /// # Arguments
     ///
     /// * 'charge_in' - any residual charge to bear in to the new schedule
+    /// * 'pre_blocks' - the number of blocks to skip before starting the search
     /// * 'seek_first_charge' - time block to start search from
     /// * 'best_record' - the initial best record to compare with
-    fn seek_best(&self, charge_in: f64, seek_first_charge: usize, mut best_record: BlockCollection) -> BlockCollection {
+    fn seek_best(&self, charge_in: f64, pre_blocks: usize, seek_first_charge: usize, mut best_record: BlockCollection) -> BlockCollection {
         let mut quad: [BlockCollection; 4] = [Default::default(), Default::default(), Default::default(), Default::default()];
 
         for charge_level_first in (0..=90).step_by(5) {
-            quad[0] = self.seek_charge(0, seek_first_charge, charge_level_first, charge_in);
+            quad[0] = self.seek_charge(pre_blocks, seek_first_charge, charge_level_first, charge_in);
 
             for seek_first_use in quad[0].next_start..self.schedule_length {
                 for use_end_first in seek_first_use..=self.schedule_length {
@@ -322,8 +328,9 @@ impl<'a> Schedule<'a> {
     /// # Arguments
     ///
     /// * 'charge_in' - residual charge from the previous block
-    fn create_base_block_collection(&mut self, charge_in: f64) -> BlockCollection {
-        let pm = self.update_for_pv(BlockType::Use, 0, self.schedule_length, charge_in);
+    /// * 'pre_blocks' - the number of blocks to skip
+    fn create_base_block_collection(&mut self, charge_in: f64, pre_blocks: usize) -> BlockCollection {
+        let pm = self.update_for_pv(BlockType::Use, pre_blocks, self.schedule_length, charge_in);
         let block = self.get_none_charge_block(&pm);
         self.base_cost = (block.cost * 100.0).round() / 100.0;
         
@@ -602,9 +609,10 @@ impl<'a> Schedule<'a> {
 /// # Arguments
 ///
 /// * 'blocks' - a vector of temporary internal blocks
+/// * 'pre_blocks' - the number of blocks that has been skipped
 /// * 'soc_kwh' - kWh per soc used to convert from charge to State of Charge
 /// * 'date_time' - the date and time to be used to convert from hours to datetime in local TZ
-fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: DateTime<Utc>) -> Vec<Block> {
+fn create_result_blocks(blocks: Vec<BlockInternal>, pre_blocks: usize, soc_kwh: f64, date_time: DateTime<Utc>) -> Vec<Block> {
     let mut result: Vec<Block> = Vec::new();
     let time = date_time.duration_trunc(TimeDelta::days(1)).unwrap();
     let offset = ((date_time - time).num_minutes() / 15) as usize;
@@ -613,15 +621,15 @@ fn create_result_blocks(blocks: Vec<BlockInternal>, soc_kwh: f64, date_time: Dat
         let mut start_time = time;
         let mut end_time = time;
 
-        let mut start_hour = (b.start_hour + offset) / 4;
-        let start_minute = (b.start_hour + offset) % 4 * 15;
+        let mut start_hour = (b.start_hour - pre_blocks + offset) / 4;
+        let start_minute = (b.start_hour - pre_blocks + offset) % 4 * 15;
         if start_hour > 23 {
             start_hour -= 24;
             start_time = start_time.add(TimeDelta::days(1));
         }
 
-        let mut end_hour = ((b.start_hour + offset) + b.size - 1) / 4;
-        let end_minute = ((b.start_hour + offset) + b.size - 1) % 4 * 15;
+        let mut end_hour = ((b.start_hour - pre_blocks + offset) + b.size - 1) / 4;
+        let end_minute = ((b.start_hour - pre_blocks + offset) + b.size - 1) % 4 * 15;
         if end_hour > 23 {
             end_hour -= 24;
             end_time = end_time.add(TimeDelta::days(1));
