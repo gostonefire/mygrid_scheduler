@@ -88,12 +88,12 @@ fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, soh: u8, run_schema:
     let sr = scheduler.update_scheduling(&pd.tariffs, &pd.cons, &pd.net_prod, soc_in, run_schema.run_start, run_schema.schedule_start);
 
     let base_data = BaseData {
-        date_time: run_schema.schedule_day_start,
+        date_time: run_schema.schedule_start,
         base_cost: sr.base_cost,
         schedule_cost: sr.total_cost,
         soc_kwh: scheduler.soc_kwh,
-        production: MinuteValues::new(&pv_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
-        consumption: MinuteValues::new(&cons_estimate, run_schema.schedule_day_start).time_groups(5, false).data,
+        production: MinuteValues::new(&pv_estimate, run_schema.run_start).time_groups(5, false).data,
+        consumption: MinuteValues::new(&cons_estimate, run_schema.run_start).time_groups(5, false).data,
         forecast: forecast.forecast,
         tariffs,
         tariff_fees: TariffFees {
@@ -141,12 +141,11 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> Result<RunSchema, Wo
     let run_start_utc = run_start.with_timezone(&Utc);
 
     let schedule_start_utc = schedule_start.with_timezone(&Utc);
-    let (schedule_day_start_utc, schedule_day_end_utc) = get_utc_day_start(schedule_start_utc, 0);
+    let (_, schedule_day_end_utc) = get_utc_day_start(schedule_start_utc, 0);
 
     Ok(RunSchema {
         run_start: run_start_utc,
         schedule_start: schedule_start_utc,
-        schedule_day_start: schedule_day_start_utc,
         schedule_day_end: schedule_day_end_utc,
         local_offset: run_start.offset().local_minus_utc() as i64,
     })
@@ -250,7 +249,6 @@ fn get_utc_day_start(date_time: DateTime<Utc>, day_index: i64) -> (DateTime<Utc>
 struct RunSchema {
     run_start: DateTime<Utc>,
     schedule_start: DateTime<Utc>,
-    schedule_day_start: DateTime<Utc>,
     schedule_day_end: DateTime<Utc>,   // Non-Inclusive
     local_offset: i64,
 }

@@ -191,8 +191,8 @@ impl PVProduction {
     ///
     /// * 'solar_positions' - solar positions during the day
     fn full_sun_minute(&self, solar_positions: &SolarPositions) -> Vec<(usize, usize)> {
-        let mut up: usize = 0;
-        let mut down: usize = 0;
+        let mut up: Option<usize> = None;
+        let mut down: Option<usize> = None;
 
         let mut up_pairs: Vec<(f64,f64,f64)> = Vec::new();
         let obst_len = self.start_azm_elv.len();
@@ -221,20 +221,20 @@ impl PVProduction {
             for m in *sunrise..*sunset {
                 if solar_positions.azimuth[m] < 180.0 {
                     for up_obst in up_pairs.iter() {
-                        if up == 0 && solar_positions.azimuth[m] >= up_obst.0 && solar_positions.azimuth[m] < up_obst.1 && solar_positions.elevation[m] > up_obst.2 {
-                            up = m;
+                        if up.is_none() && solar_positions.azimuth[m] >= up_obst.0 && solar_positions.azimuth[m] < up_obst.1 && solar_positions.elevation[m] > up_obst.2 {
+                            up = Some(m);
                         }
                     }
                 } else {
                     for down_obst in down_pairs.iter() {
-                        if down == 0 && solar_positions.azimuth[m] >= down_obst.0 && solar_positions.azimuth[m] < down_obst.1 && solar_positions.elevation[m] < down_obst.2 {
-                            down = m;
+                        if down.is_none() && solar_positions.azimuth[m] >= down_obst.0 && solar_positions.azimuth[m] < down_obst.1 && solar_positions.elevation[m] < down_obst.2 {
+                            down = Some(m);
                         }
                     }
                 }
             }
 
-            up_down.push((up, down));
+            up_down.push((up.unwrap_or(0), down.unwrap_or(0)));
         });
 
         up_down
@@ -332,6 +332,8 @@ fn sunrise_sunset(
 /// * 'vn' - the end point for when v gives an output of 1 and no longer influences output
 /// * 'exp' - exponent that determines the exponential shape
 fn exp_increase(v: usize, v0: usize, vn: usize, exp: i32) -> f64 {
+    if v0 >= vn { return 1.0; }
+
     let denominator = (vn - v0) as f64;
     let enumerator = (v as f64 - v0 as f64).clamp(0.0, denominator);
 
@@ -348,6 +350,8 @@ fn exp_increase(v: usize, v0: usize, vn: usize, exp: i32) -> f64 {
 /// * 'vn' - the end point for when v gives an output of 1 and no longer influences output
 /// * 'exp' - exponent that determines the exponential shape
 fn exp_decrease(v: usize, v0: usize, vn: usize, exp: i32) -> f64 {
+    if v0 >= vn { return 0.0; }
+
     let denominator = (vn - v0) as f64;
     let enumerator = (vn as f64 - v as f64).clamp(0.0, denominator);
 
@@ -381,7 +385,7 @@ fn sun_intensity_factor(zenith_angle: &[f64]) -> Vec<f64> {
 
     let mut result: Vec<f64> = vec![0.0; zenith_angle.len()];
 
-    for i in 0..1440usize {
+    for i in 0..zenith_angle.len() {
         let zenith_cos = zenith_angle[i].to_radians().cos();
         let enumerator = 2.0 * R + 1.0;
         let denominator = ((R * zenith_cos).powf(2.0) + 2.0 * R + 1.0).sqrt() + R * zenith_cos;

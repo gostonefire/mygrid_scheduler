@@ -25,7 +25,7 @@ high_clouds_factor = 0.25    # How much hcc_mean from SMHI can block PV power on
 
 [charge]
 bat_capacity_kwh = 16.59     # New battery total capacity (i.e. with SoH at 100%)
-charge_kwh_hour = 1.5        # Typical charging power per time unit from grid
+charge_kwh_hour = 1.4        # Typical charging power per time unit from grid
 charge_efficiency = 0.9      # Loss when charging is typical 10% (slightly lower in perfect conditions)
 discharge_efficiency = 0.9   # Loss when discharging is typical 10% (slightly lower in perfect conditions)
 
