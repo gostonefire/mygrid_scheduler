@@ -2,7 +2,7 @@ mod models;
 
 use std::time::Duration;
 use chrono::{DateTime, DurationRound, TimeDelta, Utc};
-use ureq::Agent;
+use reqwest::blocking::Client;
 use anyhow::Result;
 use thiserror::Error;
 use crate::config::Config;
@@ -11,7 +11,7 @@ use crate::manager_forecast::models::ForecastRecord;
 
 /// Struct for managing whether forecasts
 pub struct Forecast {
-    agent: Agent,
+    client: Client,
     host: String,
     port: u16,
     high_clouds_factor: f64,
@@ -25,20 +25,19 @@ impl Forecast {
     /// # Arguments
     ///
     /// * 'config' - configuration to use
-    pub fn new(config: &Config) -> Forecast {
-        let agent_config = Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(30)))
-            .build();
+    pub fn new(config: &Config) -> Result<Forecast, ForecastError> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()?;
 
-        let agent = agent_config.into();
-
-        Forecast {
-            agent,
+        Ok(Forecast {
+            client,
             host: config.forecast.host.clone(),
             port: config.forecast.port,           
             high_clouds_factor: config.production.high_clouds_factor,
             mid_clouds_factor: config.production.mid_clouds_factor,
-            low_clouds_factor: config.production.low_clouds_factor, }
+            low_clouds_factor: config.production.low_clouds_factor, 
+        })
     }
 
     /// Retrieves a weather forecast for the given date
@@ -55,14 +54,12 @@ impl Forecast {
 
         let url = format!("http://{}:{}/forecast", self.host, self.port);
 
-        let json = self.agent
+        let response = self.client
             .get(url)
-            .query_pairs(vec![("id", "smhi"), ("from", &from.to_rfc3339()), ("to", &to.to_rfc3339())])
-            .call()
-            .map_err(|e| ForecastError::FetchError(e.to_string()))?
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| ForecastError::FetchError(e.to_string()))?;
+            .query(&vec![("id", "smhi"), ("from", &from.to_rfc3339()), ("to", &to.to_rfc3339())])
+            .send()?;
+        
+        let json = response.text()?;
 
         let tmp_forecast: Vec<ForecastRecord> = serde_json::from_str(&json)
             .map_err(|e| ForecastError::ParseError(e.to_string()))?;
@@ -115,10 +112,10 @@ impl Forecast {
 pub enum ForecastError {
     #[error("DateError: {0}")]
     DateError(String),
-    #[error("FetchError: {0}")]
-    FetchError(String),
     #[error("ParseError: {0}")]
     ParseError(String),
     #[error("EmptyForecastError: {0}")]
     EmptyForecastError(String),
+    #[error("NetworkError: {0}")]
+    NetworkError(#[from] reqwest::Error),
 }

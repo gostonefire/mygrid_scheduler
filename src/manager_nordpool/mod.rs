@@ -2,7 +2,7 @@ mod models;
 
 use std::time::Duration;
 use chrono::{DateTime, DurationRound, TimeDelta, Utc};
-use ureq::Agent;
+use reqwest::blocking::Client;
 use anyhow::Result;
 use thiserror::Error;
 use crate::models::{TariffValue};
@@ -10,7 +10,7 @@ use crate::config::TariffFees;
 use crate::manager_nordpool::models::Tariffs;
 
 pub struct NordPool {
-    agent: Agent,
+    client: Client,
     variable_fee: f64,
     spot_fee_percentage: f64,
     energy_tax: f64,
@@ -23,15 +23,13 @@ pub struct NordPool {
 }
 
 impl NordPool {
-    pub fn new(config: &TariffFees) -> NordPool {
-        let agent_config = Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(30)))
-            .build();
+    pub fn new(config: &TariffFees) -> Result<NordPool, NordPoolError> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()?;
 
-        let agent = agent_config.into();
-
-        Self {
-            agent,
+        Ok(Self {
+            client,
             variable_fee: config.variable_fee,
             spot_fee_percentage: config.spot_fee_percentage / 100.0,
             energy_tax: config.energy_tax,
@@ -41,7 +39,7 @@ impl NordPool {
             guarantees_of_origin: config.guarantees_of_origin,
             fixed: config.fixed,
             production_price: config.production_price,
-        }
+        })
     }
 
     /// Retrieves day ahead prices from NordPool
@@ -83,18 +81,16 @@ impl NordPool {
             ("currency", "SEK"),
         ];
 
-        let mut response = self.agent
+        let response = self.client
             .get(url)
-            .query_pairs(query)
-            .call()?;
+            .query(&query)
+            .send()?;
 
         if response.status() == 204 {
             return Err(NordPoolError::NoContentError)?;
         }
 
-        let json = response
-            .body_mut()
-            .read_to_string()?;
+        let json = response.text()?;
 
         let tariffs: Tariffs = serde_json::from_str(&json)?;
         let result = self.tariffs_to_vec(&tariffs, day_start, day_end)?;
@@ -168,7 +164,7 @@ pub enum NordPoolError {
     #[error("DocumentError: {0}")]
     DocumentError(#[from] serde_json::Error),
     #[error("NetworkError: {0}")]
-    NetworkError(#[from] ureq::Error),
+    NetworkError(#[from] reqwest::Error),
     #[error("NoContentError")]
     NoContentError,
     #[error("ContentLengthError")]

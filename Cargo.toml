@@ -1,6 +1,6 @@
 [package]
 name = "mygrid_scheduler"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 
 [dependencies]
@@ -8,16 +8,16 @@ chrono = { version = "0.4", features = ["serde"] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 rayon = "1.11"
-ureq = "3.1"
+reqwest = { version = "0.13", default-features = false, features = ["query", "blocking", "rustls"]}
 spa_sra = {version = "0.3", features = ["chrono_0_4"]}
 lettre = "0.11"
 log4rs = "1.4"
 log = "0.4"
-toml = "0.9"
-md-5 = "0.10.6"
+toml = { version = "1.0", default-features = false, features = ["serde", "parse"] }
 thiserror = "2.0"
 anyhow = "1.0"
 glob = "0.3"
+foxess = { version = "0.2", default-features = false, features = ["blocking"] }
 
 [profile.release]
 # debug = true

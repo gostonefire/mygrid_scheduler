@@ -2,14 +2,14 @@ use std::{env, fs};
 use std::path::PathBuf;
 use log::info;
 use anyhow::Result;
+use foxess::Fox;
 use thiserror::Error;
 use crate::config::{load_config, Config, LoadConfigurationError};
 use crate::consumption::Consumption;
 use crate::logging::{setup_logger, LoggerError};
-use crate::manager_forecast::Forecast;
-use crate::manager_fox_cloud::Fox;
+use crate::manager_forecast::{Forecast, ForecastError};
 use crate::manager_mail::{Mail, MailError};
-use crate::manager_nordpool::NordPool;
+use crate::manager_nordpool::{NordPool, NordPoolError};
 use crate::manager_production::PVProduction;
 
 pub struct Mgr {
@@ -55,9 +55,9 @@ pub fn init() -> Result<(Config, Mgr), InitializationError> {
 
     
     // Instantiate structs
-    let fox = Fox::new(&config.fox_ess);
-    let nordpool = NordPool::new(&config.tariff_fees);
-    let smhi = Forecast::new(&config);
+    let fox = Fox::new(&config.fox_ess.api_key, &config.fox_ess.inverter_sn, 30)?;
+    let nordpool = NordPool::new(&config.tariff_fees)?;
+    let smhi = Forecast::new(&config)?;
     let pv = PVProduction::new(&config.production, config.geo_ref.lat, config.geo_ref.long);
     let cons = Consumption::new(&config.consumption);
     let mail = Mail::new(&config.mail)?;
@@ -104,4 +104,10 @@ pub enum InitializationError {
     CredentialEnvError(#[from] env::VarError),
     #[error("CredentialUtf8Error: {0}")]
     CredentialUtf8Error(#[from] std::string::FromUtf8Error),
+    #[error("FoxInitializationError: {0}")]
+    FoxInitializationError(#[from] foxess::FoxError),
+    #[error("NordPoolInitializationError: {0}")]
+    NordPoolInitializationError(#[from] NordPoolError),
+    #[error("ForecastInitializationError: {0}")]
+    ForecastInitializationError(#[from] ForecastError),
 }

@@ -11,7 +11,7 @@ mod manager_production;
 mod spline;
 mod manager_mail;
 mod manager_forecast;
-mod manager_fox_cloud;
+// mod manager_fox_cloud;
 mod config;
 mod initialization;
 mod consumption;
