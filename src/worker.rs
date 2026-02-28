@@ -10,7 +10,7 @@ use crate::config::{Config, Files};
 use crate::initialization::Mgr;
 use crate::models::{BaseData, MinuteValues, TariffFees};
 use crate::{retry, wrapper};
-use crate::scheduler::{Block, Schedule, SchedulerResult};
+use crate::scheduler::{Schedule, SchedulerResult};
 
 /// Runs a schedule creation process
 ///
@@ -61,7 +61,7 @@ pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option
         info!("{}", b);
     }
 
-    save_schedule(&files.schedule_dir, scheduler_result.start_time, scheduler_result.end_time, &scheduler_result.blocks)?;
+    save_schedule(&files.schedule_dir, scheduler_result)?;
     save_base_data(&files.base_data_dir, &base_data)?;
 
     Ok(())
@@ -164,19 +164,17 @@ fn get_schedule_start_schema(run_start: DateTime<Local>) -> Result<RunSchema, Wo
 /// # Arguments
 ///
 /// * 'path' - path to the schedule directory
-/// * 'schedule_start' - the time when the schedule starts
-/// * 'schedule_end' - the time when the schedule ends (non-inclusive)
-/// * 'schedule' - the vector of block that represents the schedule
-fn save_schedule(path: &str, schedule_start: DateTime<Utc>, schedule_end: DateTime<Utc>, schedule: &Vec<Block>) -> Result<(), WorkerError> {
-    let filename = format!("{}{}_{}_schedule.json", path, schedule_start.format("%Y%m%d%H%M"), schedule_end.format("%Y%m%d%H%M"));
+/// * 'schedule' - the scheduler result including its start and end time
+fn save_schedule(path: &str, schedule: SchedulerResult) -> Result<(), WorkerError> {
+    let filename = format!("{}{}_{}_schedule.json", path, schedule.start_time.format("%Y%m%d%H%M"), schedule.end_time.format("%Y%m%d%H%M"));
 
-    let json = serde_json::to_string_pretty(schedule)
+    let json = serde_json::to_string_pretty(&schedule)
         .map_err(|e| WorkerError::SaveScheduleError(format!("error serializing schedule: {}", e.to_string())))?;
 
     fs::write(&filename, json)
         .map_err(|e| WorkerError::SaveScheduleError(format!("error writing schedule to file: {}", e.to_string())))?;
 
-    clean_up_files(&format!("{}*_schedule.json", path), schedule_start)?;
+    clean_up_files(&format!("{}*_schedule.json", path), schedule.start_time)?;
 
     info!("Schedule saved to {}", filename);
 

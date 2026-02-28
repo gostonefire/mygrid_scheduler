@@ -115,10 +115,16 @@ struct PeriodMetrics {
     cost: f64,
 }
 
+#[derive(Serialize)]
 pub struct SchedulerResult {
+    pub mode_scheduler: bool,
+    #[serde(skip)]
     pub base_cost: f64,
+    #[serde(skip)]
     pub total_cost: f64,
+    #[serde(skip)]
     pub start_time: DateTime<Utc>,
+    #[serde(skip)]
     pub end_time: DateTime<Utc>,
     pub blocks: Vec<Block>,
 }
@@ -136,6 +142,7 @@ pub struct Schedule<'a> {
     charge_efficiency: f64,
     discharge_efficiency: f64,
     min_saving: f64,
+    mode_scheduler: bool,
 }
 
 impl<'a> Schedule<'a> {
@@ -159,6 +166,7 @@ impl<'a> Schedule<'a> {
             charge_efficiency: config.charge.charge_efficiency,
             discharge_efficiency: config.charge.discharge_efficiency,
             min_saving: config.scheduler.min_saving,
+            mode_scheduler: config.scheduler.mode_scheduler,
         }
     }
 
@@ -184,18 +192,19 @@ impl<'a> Schedule<'a> {
             .filter(|t| t.valid_time >= start_time && t.valid_time < end_time)
             .map(|t| t.buy)
             .collect::<Vec<f64>>();
+        let capacity = tariffs.len();
 
-        let mut prod: Vec<f64> = Vec::with_capacity(24);
+        let mut prod: Vec<f64> = Vec::with_capacity(capacity);
         production.iter()
             .filter(|p| p.valid_time >= start_time && p.valid_time < end_time)
             .for_each(|p| prod.push(p.data / 1000.0));
 
-        let mut cons: Vec<f64> = Vec::with_capacity(24);
+        let mut cons: Vec<f64> = Vec::with_capacity(capacity);
         consumption.iter()
             .filter(|c| c.valid_time >= start_time && c.valid_time < end_time)
             .for_each(|p| cons.push(p.data / 1000.0));
 
-        let mut net_prod: Vec<f64> = Vec::with_capacity(24);
+        let mut net_prod: Vec<f64> = Vec::with_capacity(capacity);
         prod.iter()
             .enumerate()
             .for_each(|(i, &p)| net_prod.push(p - cons[i]));
@@ -236,6 +245,7 @@ impl<'a> Schedule<'a> {
         let blocks = create_result_blocks(block_collection.blocks, pre_blocks as usize, self.soc_kwh, start_time);
 
         SchedulerResult {
+            mode_scheduler: self.mode_scheduler,
             base_cost: self.base_cost,
             total_cost: block_collection.total_cost,
             start_time,
@@ -522,8 +532,55 @@ impl<'a> Schedule<'a> {
     fn add_net_prod(&self, np_idx: usize, np_item: f64, pm: &mut PeriodMetrics) {
         // If net production is negative, we will potentially draw power from the battery and thus
         // need to consider the efficiency of transforming battery stored energy into household energy
-        let efficiency: f64 = if np_item < 0.0 { self.discharge_efficiency } else { 1.0 / self.charge_efficiency };
+        //let efficiency: f64 = if np_item < 0.0 { self.discharge_efficiency } else { 1.0 / self.charge_efficiency };
+        let tariff = self.tariffs[np_idx];
 
+        // If we are in mode scheduler mode, and the block type is Hold, we are not going to use any
+        // power from the battery even if we during the Hold block has accumulated power above the
+        // hold level. This is how Backup mode is implemented in Fox ESS inverter. Hence, we always
+        // have a cost when net production is negative, and always add power to the battery when net production
+        // is positive (unless the battery is full).
+        if self.mode_scheduler && pm.block_type == BlockType::Hold {
+            if np_item < 0.0 {
+                pm.cost += tariff * (-np_item);
+            } else {
+                let new_charge = pm.charge_out + np_item * self.charge_efficiency;
+                pm.charge_out = new_charge.min(self.bat_kwh);
+            }
+            return;
+        }
+
+        // Calculate the battery delta given the time period delta between production and consumption.
+        // If we consume more than we produce (i.e. np_item is negative), we have to draw from battery
+        // taken efficiency into account (we discharge more power from the battery than is effectively used).
+        // If we produce more than we consume (i.e. np_item is positive), we charge the battery but loose
+        // some power due to the efficiency.
+        let batt_delta = if np_item < 0.0 {
+            np_item / self.discharge_efficiency
+        } else {
+            np_item * self.charge_efficiency
+        };
+
+        // The expected charge out from the period with the addition of the efficiency-corrected time
+        // period delta. Net add goes down if np_item is negative and up if it is positive.
+        let expected_charge_out = pm.charge_out + batt_delta;
+
+        if expected_charge_out < pm.hold_level {
+            // If the expected charge out is lower than the hold level, we need to cover for the difference
+            // by buying from the grid.
+            let shortfall_batt = pm.hold_level - expected_charge_out;
+
+            // Since we don't have to buy from the grid taken efficiency of discharging from the battery
+            // into account, we have to convert the shortfall back before calculating the cost. we divided
+            // by efficiency previously, so to convert back we multiply by efficiency.
+            pm.cost += tariff * shortfall_batt * self.discharge_efficiency;
+            pm.charge_out = pm.hold_level;
+        } else {
+            pm.charge_out = expected_charge_out.min(self.bat_kwh);
+        }
+
+
+        /*
         // net add is the currently expected charge out from the period with the addition of the
         // current time instance net production. The net production may be negative if the household
         // draws more power than the PV produces.
@@ -532,7 +589,7 @@ impl<'a> Schedule<'a> {
             // If the net adding is negative, we need to buy energy from the grid and also revert
             // the efficiency previously added for drawing power from the battery.
             // Charge out from the time instance will be whatever hold level is set.
-            pm.cost += self.tariffs[np_idx] * (pm.hold_level - net_add) * efficiency;
+            pm.cost += tariff * (pm.hold_level - net_add) * efficiency;
             pm.charge_out = pm.hold_level;
         } else {
             // If the net adding is positive, we check whether the battery is full and thus will
@@ -541,6 +598,8 @@ impl<'a> Schedule<'a> {
             // on whether the battery is full or not.
             pm.charge_out = net_add.min(self.bat_kwh);
         }
+
+        */
     }
 
     /// Returns the best block collection compared between the latest results and the stored best
