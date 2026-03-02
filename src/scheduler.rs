@@ -118,6 +118,7 @@ struct PeriodMetrics {
 #[derive(Serialize)]
 pub struct SchedulerResult {
     pub mode_scheduler: bool,
+    pub soc_kwh: f64,
     #[serde(skip)]
     pub base_cost: f64,
     #[serde(skip)]
@@ -246,6 +247,7 @@ impl<'a> Schedule<'a> {
 
         SchedulerResult {
             mode_scheduler: self.mode_scheduler,
+            soc_kwh: self.soc_kwh,
             base_cost: self.base_cost,
             total_cost: block_collection.total_cost,
             start_time,
