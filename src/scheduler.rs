@@ -128,6 +128,7 @@ pub struct SchedulerResult {
     #[serde(skip)]
     pub end_time: DateTime<Utc>,
     pub blocks: Vec<Block>,
+    pub schedule_id: i64,
 }
 
 /// Struct representing the block schedule from the current hour and forward
@@ -253,6 +254,7 @@ impl<'a> Schedule<'a> {
             start_time,
             end_time: blocks.last().expect("should exist at least the base block").end_time.add(TimeDelta::minutes(15)),
             blocks,
+            schedule_id: Utc::now().timestamp(),
         }
     }
 
