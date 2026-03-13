@@ -47,7 +47,7 @@ production_price       = 7.5
 
 [scheduler]
 min_saving             = 1.0    # How much better in SEK the schedule needs to be compared to base schedule (full day Use)
-mode_scheduler         = false  # Whether to use mode scheduler backup or original hold block
+mode_scheduler         = true   # Whether to use mode scheduler backup or original hold block
 
 [fox_ess]
 
