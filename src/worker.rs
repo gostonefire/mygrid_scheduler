@@ -113,6 +113,7 @@ fn get_schedule(config: &Config, mgr: &mut Mgr, soc_in: u8, soh: u8, run_schema:
             electric_certificate: config.tariff_fees.electric_certificate,
             guarantees_of_origin: config.tariff_fees.guarantees_of_origin,
             fixed: config.tariff_fees.fixed,
+            production_price: config.tariff_fees.production_price,
         }
     };
 

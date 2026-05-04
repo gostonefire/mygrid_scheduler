@@ -33,6 +33,9 @@ pub struct TariffFees {
     pub electric_certificate: f64,
     pub guarantees_of_origin: f64,
     pub fixed: f64,
+    
+    // Micro production price (öre/kWh, no VAT gained)
+    pub production_price: f64,
 }
 
 pub struct PreformattedData {
