@@ -63,7 +63,6 @@ pub struct TariffFees {
 #[derive(Deserialize)]
 pub struct Scheduler {
     pub min_saving: f64,
-    pub mode_scheduler: bool,
 }
 
 #[derive(Deserialize, Clone)]

@@ -117,7 +117,7 @@ struct PeriodMetrics {
 
 #[derive(Serialize)]
 pub struct SchedulerResult {
-    pub mode_scheduler: bool,
+    pub mode_scheduler: bool, // This flag shall be removed once the Mygrid application is updated to always use the mode scheduler
     pub soc_kwh: f64,
     #[serde(skip)]
     pub base_cost: f64,
@@ -144,7 +144,6 @@ pub struct Schedule<'a> {
     charge_efficiency: f64,
     discharge_efficiency: f64,
     min_saving: f64,
-    mode_scheduler: bool,
 }
 
 impl<'a> Schedule<'a> {
@@ -168,7 +167,6 @@ impl<'a> Schedule<'a> {
             charge_efficiency: config.charge.charge_efficiency,
             discharge_efficiency: config.charge.discharge_efficiency,
             min_saving: config.scheduler.min_saving,
-            mode_scheduler: config.scheduler.mode_scheduler,
         }
     }
 
@@ -247,7 +245,7 @@ impl<'a> Schedule<'a> {
         let blocks = create_result_blocks(block_collection.blocks, pre_blocks as usize, self.soc_kwh, start_time);
 
         SchedulerResult {
-            mode_scheduler: self.mode_scheduler,
+            mode_scheduler: true,
             soc_kwh: self.soc_kwh,
             base_cost: self.base_cost,
             total_cost: block_collection.total_cost,
@@ -539,12 +537,12 @@ impl<'a> Schedule<'a> {
         //let efficiency: f64 = if np_item < 0.0 { self.discharge_efficiency } else { 1.0 / self.charge_efficiency };
         let tariff = self.tariffs[np_idx];
 
-        // If we are in mode scheduler mode, and the block type is Hold, we are not going to use any
-        // power from the battery even if we during the Hold block has accumulated power above the
+        // We are using the mode scheduler in the inverter, and the block type is Hold. We are not going to use any
+        // power from the battery even if we during the Hold block have accumulated power above the
         // hold level. This is how Backup mode is implemented in Fox ESS inverter. Hence, we always
-        // have a cost when net production is negative, and always add power to the battery when net production
+        // have a cost when net production is negative and always add power to the battery when net production
         // is positive (unless the battery is full).
-        if self.mode_scheduler && pm.block_type == BlockType::Hold {
+        if pm.block_type == BlockType::Hold {
             if np_item < 0.0 {
                 pm.cost += tariff * (-np_item);
             } else {
