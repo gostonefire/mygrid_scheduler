@@ -49,7 +49,8 @@ production_price       = 7.5
 min_saving             = 2.0    # How much better in SEK the schedule needs to be compared to base schedule (full day Use)
 mode_scheduler         = true   # Whether to use mode scheduler backup or original hold block
 
-[fox_ess]
+[inverter]
+host              = "zeroshed.gridfire.org:8080"
 
 [forecast]
 host              = "mygrid.gridfire.org"

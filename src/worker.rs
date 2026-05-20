@@ -4,7 +4,6 @@ use chrono::{DateTime, Duration, DurationRound, Local, NaiveDateTime, TimeDelta,
 use glob::glob;
 use log::info;
 use anyhow::Result;
-use foxess::FoxVariables;
 use thiserror::Error;
 use crate::config::{Config, Files};
 use crate::initialization::Mgr;
@@ -37,19 +36,16 @@ pub fn run(config: &Config, mgr: &mut Mgr, files: &Files, debug_run_time: Option
 
     info!("Run start: {}, Schedule Start: {}", run_schema.run_start, run_schema.schedule_start);
 
-    // Get current SoC and SoH from Fox Cloud
+    // Get current SoC and SoH from inverter
     let (start_soc, soh) = if let Some(soc_soh) = debug_soc_soh_in {
         (soc_soh[0], soc_soh[1])
     } else {
-        let variables_data = retry!(||mgr.fox.get_variables(vec![FoxVariables::SoC, FoxVariables::SOH]))
-            .map_err(|e| WorkerError::EstimateSocError(format!("error getting current soc: {}", e.to_string())))?;
-        
-        let soc = variables_data.get_u8_percent(FoxVariables::SoC)
-            .ok_or(WorkerError::EstimateSocError("failed to get SoC from Fox Cloud".to_string()))?;
+        let soc = mgr.inverter.get_soc()
+            .map_err(|e| WorkerError::EstimateSocError(format!("failed to get SoC from inverter: {}", e.to_string())))?;
 
-        let soh = variables_data.get_u8_percent(FoxVariables::SOH)
-            .ok_or(WorkerError::EstimateSocError("failed to get SOH from Fox Cloud".to_string()))?;
-        
+        let soh = mgr.inverter.get_soh()
+            .map_err(|e| WorkerError::EstimateSocError(format!("failed to get SoH from inverter: {}", e.to_string())))?;
+
         (soc, soh)
     };
 

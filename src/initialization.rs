@@ -2,18 +2,18 @@ use std::{env, fs};
 use std::path::PathBuf;
 use log::info;
 use anyhow::Result;
-use foxess::Fox;
 use thiserror::Error;
 use crate::config::{load_config, Config, LoadConfigurationError};
 use crate::consumption::Consumption;
 use crate::logging::{setup_logger, LoggerError};
 use crate::manager_forecast::{Forecast, ForecastError};
+use crate::manager_inverter::{Inverter, InverterError};
 use crate::manager_mail::{Mail, MailError};
 use crate::manager_nordpool::{NordPool, NordPoolError};
 use crate::manager_production::PVProduction;
 
 pub struct Mgr {
-    pub fox: Fox,
+    pub inverter: Inverter,
     pub nordpool: NordPool,
     pub forecast: Forecast,
     pub pv: PVProduction,
@@ -36,8 +36,6 @@ pub fn init() -> Result<(Config, Mgr), InitializationError> {
 
     // Load configuration
     let mut config = load_config(&config_path)?;
-    config.fox_ess.api_key = read_credential("fox_ess_api_key")?;
-    config.fox_ess.inverter_sn = read_credential("fox_ess_inverter_sn")?;
     config.mail.smtp_user = read_credential("mail_smtp_user")?;
     config.mail.smtp_password = read_credential("mail_smtp_password")?;
 
@@ -55,7 +53,7 @@ pub fn init() -> Result<(Config, Mgr), InitializationError> {
 
     
     // Instantiate structs
-    let fox = Fox::new(&config.fox_ess.api_key, &config.fox_ess.inverter_sn, 30)?;
+    let inverter = Inverter::new(&config.inverter.host)?;
     let nordpool = NordPool::new(&config.tariff_fees)?;
     let smhi = Forecast::new(&config)?;
     let pv = PVProduction::new(&config.production, config.geo_ref.lat, config.geo_ref.long);
@@ -63,7 +61,7 @@ pub fn init() -> Result<(Config, Mgr), InitializationError> {
     let mail = Mail::new(&config.mail)?;
 
     let mgr = Mgr {
-        fox,
+        inverter,
         nordpool,
         forecast: smhi,
         pv,
@@ -104,8 +102,8 @@ pub enum InitializationError {
     CredentialEnvError(#[from] env::VarError),
     #[error("CredentialUtf8Error: {0}")]
     CredentialUtf8Error(#[from] std::string::FromUtf8Error),
-    #[error("FoxInitializationError: {0}")]
-    FoxInitializationError(#[from] foxess::FoxError),
+    #[error("InverterInitializationError: {0}")]
+    InverterInitializationError(#[from] InverterError),
     #[error("NordPoolInitializationError: {0}")]
     NordPoolInitializationError(#[from] NordPoolError),
     #[error("ForecastInitializationError: {0}")]

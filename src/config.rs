@@ -66,12 +66,9 @@ pub struct Scheduler {
     pub mode_scheduler: bool,
 }
 
-#[derive(Deserialize)]
-pub struct FoxESS {
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default)]
-    pub inverter_sn: String,
+#[derive(Deserialize, Clone)]
+pub struct Inverter {
+    pub host: String,
 }
 
 #[derive(Deserialize)]
@@ -116,7 +113,7 @@ pub struct Config {
     pub charge: ChargeParameters,
     pub tariff_fees: TariffFees,
     pub scheduler: Scheduler,
-    pub fox_ess: FoxESS,
+    pub inverter: Inverter,
     pub forecast: Forecast,   
     pub mail: MailParameters,
     pub files: Files,

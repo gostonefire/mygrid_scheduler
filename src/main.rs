@@ -19,6 +19,7 @@ mod logging;
 mod macros;
 pub mod models;
 mod worker;
+mod manager_inverter;
 
 fn main() -> Result<()> {
     ThreadPoolBuilder::new().num_threads(2).build_global()?;
