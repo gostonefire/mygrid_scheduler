@@ -2,7 +2,7 @@ use std::ops::Add;
 use std::fmt;
 use std::fmt::Formatter;
 use chrono::{DateTime, DurationRound, TimeDelta, Timelike, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use crate::models::{TimeValue, TariffValue, PreformattedData};
 use rayon::prelude::*;
 use thiserror::Error;
@@ -11,7 +11,7 @@ use crate::config::Config;
 
 
 /// Available block types
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Clone, PartialEq, Eq, Debug)]
 pub enum BlockType {
     Charge,
     Hold,
@@ -30,12 +30,9 @@ impl fmt::Display for BlockType {
 }
 
 /// Block status
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Clone, PartialEq, Eq, Debug)]
 pub enum Status {
     Waiting,
-    Started,
-    Full(usize),
-    Error,
 }
 
 /// Implementation of the Display Trait for pretty print
@@ -43,31 +40,32 @@ impl fmt::Display for Status {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Status::Waiting => write!(f, "Waiting  "),
-            Status::Started => write!(f, "Started  "),
-            Status::Full(soc) => write!(f, "Full: {:>3}", soc),
-            Status::Error   => write!(f, "Error    "),
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug)]
 pub struct Block {
     block_id: usize,
     pub block_type: BlockType,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
+    #[serde(skip)]
     pub start_hour: usize,
+    #[serde(skip)]
     pub start_minute: usize,
+    #[serde(skip)]
     pub end_hour: usize,
+    #[serde(skip)]
     pub end_minute: usize,
-    size: usize,
     pub cost: f64,
+    #[serde(skip)]
     pub charge_in: f64,
+    #[serde(skip)]
     pub charge_out: f64,
     pub true_soc_in: Option<usize>,
     pub soc_in: usize,
     pub soc_out: usize,
-    soc_kwh: f64,
     pub status: Status,
 }
 
@@ -117,8 +115,6 @@ struct PeriodMetrics {
 
 #[derive(Serialize)]
 pub struct SchedulerResult {
-    pub mode_scheduler: bool, // This flag shall be removed once the Mygrid application is updated to always use the mode scheduler
-    pub soc_kwh: f64,
     #[serde(skip)]
     pub base_cost: f64,
     #[serde(skip)]
@@ -245,8 +241,6 @@ impl<'a> Schedule<'a> {
         let blocks = create_result_blocks(block_collection.blocks, pre_blocks as usize, self.soc_kwh, start_time);
 
         SchedulerResult {
-            mode_scheduler: true,
-            soc_kwh: self.soc_kwh,
             base_cost: self.base_cost,
             total_cost: block_collection.total_cost,
             start_time,
@@ -580,28 +574,6 @@ impl<'a> Schedule<'a> {
         } else {
             pm.charge_out = expected_charge_out.min(self.bat_kwh);
         }
-
-
-        /*
-        // net add is the currently expected charge out from the period with the addition of the
-        // current time instance net production. The net production may be negative if the household
-        // draws more power than the PV produces.
-        let net_add = pm.charge_out + np_item / efficiency;
-        if net_add < pm.hold_level {
-            // If the net adding is negative, we need to buy energy from the grid and also revert
-            // the efficiency previously added for drawing power from the battery.
-            // Charge out from the time instance will be whatever hold level is set.
-            pm.cost += tariff * (pm.hold_level - net_add) * efficiency;
-            pm.charge_out = pm.hold_level;
-        } else {
-            // If the net adding is positive, we check whether the battery is full and thus will
-            // sell power to the grid.
-            // Charge out is set to eather max battery charge level or the net addition depending
-            // on whether the battery is full or not.
-            pm.charge_out = net_add.min(self.bat_kwh);
-        }
-
-        */
     }
 
     /// Returns the best block collection compared between the latest results and the stored best
@@ -708,14 +680,12 @@ fn create_result_blocks(blocks: Vec<BlockInternal>, pre_blocks: usize, soc_kwh: 
             start_minute,
             end_hour,
             end_minute,
-            size: b.size,
             cost: b.cost,
             charge_in: b.charge_in,
             charge_out: b.charge_out,
             true_soc_in: None,
             soc_in: 10 + (b.charge_in / soc_kwh).round().min(90.0) as usize,
             soc_out: 10 + (b.charge_out / soc_kwh).round().min(90.0) as usize,
-            soc_kwh,
             status: Status::Waiting,
         });
     }
