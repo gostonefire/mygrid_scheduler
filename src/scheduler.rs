@@ -1,7 +1,7 @@
 use std::ops::Add;
 use std::fmt;
 use std::fmt::Formatter;
-use chrono::{DateTime, DurationRound, TimeDelta, Timelike, Utc};
+use chrono::{DateTime, Duration, DurationRound, TimeDelta, Timelike, Utc};
 use serde::Serialize;
 use crate::models::{TimeValue, TariffValue, PreformattedData};
 use rayon::prelude::*;
@@ -113,6 +113,12 @@ struct PeriodMetrics {
     cost: f64,
 }
 
+#[derive(Serialize, Debug)]
+pub struct SocProgression {
+    pub end_time: DateTime<Utc>,
+    pub soc_out: usize,
+}
+
 #[derive(Serialize)]
 pub struct SchedulerResult {
     #[serde(skip)]
@@ -124,6 +130,7 @@ pub struct SchedulerResult {
     #[serde(skip)]
     pub end_time: DateTime<Utc>,
     pub blocks: Vec<Block>,
+    pub soc_progression: Vec<SocProgression>,
     pub schedule_id: i64,
 }
 
@@ -238,7 +245,9 @@ impl<'a> Schedule<'a> {
 
         let pre_blocks = (start_time - run_start).num_minutes() / 15;
         let block_collection = self.parallel_search(charge_in, pre_blocks as usize);
-        let blocks = create_result_blocks(block_collection.blocks, pre_blocks as usize, self.soc_kwh, start_time);
+        let blocks = create_result_blocks(&block_collection.blocks, pre_blocks as usize, self.soc_kwh, start_time);
+
+        let soc_progression = self.soc_progression(&block_collection.blocks, pre_blocks as usize, start_time);
 
         SchedulerResult {
             base_cost: self.base_cost,
@@ -246,8 +255,47 @@ impl<'a> Schedule<'a> {
             start_time,
             end_time: blocks.last().expect("should exist at least the base block").end_time.add(TimeDelta::minutes(15)),
             blocks,
+            soc_progression,
             schedule_id: Utc::now().timestamp(),
         }
+    }
+
+    /// Function that calculates the state of charge progression for each step over all blocks
+    ///
+    /// # Arguments
+    ///
+    /// * 'blocks' - the blocks to calculate the soc progression for
+    /// * 'pre_blocks' - the number of blocks that has been skipped
+    /// * 'start_time' - the date time when the schedule starts
+     fn soc_progression(&self, blocks: &Vec<BlockInternal>, pre_blocks: usize, start_time: DateTime<Utc>) -> Vec<SocProgression> {
+        let mut result: Vec<SocProgression> = Vec::new();
+        let mut charge_in: f64 = 0.0;
+        let mut end_time = start_time;
+        let mut block_no = pre_blocks;
+        blocks.iter()
+            .for_each(|block| {
+                charge_in = block.charge_in;
+                if block.block_type == BlockType::Charge {
+                    for _ in 0..block.size {
+                        charge_in += (block.charge_out - block.charge_in) / block.size as f64;
+                        let soc_out = 10 + (charge_in / self.soc_kwh).round().min(90.0) as usize;
+                        end_time = end_time.add(Duration::minutes(15));
+                        result.push(SocProgression { soc_out, end_time });
+                        block_no += 1;
+                    }
+                } else {
+                    for _ in 0..block.size {
+                        let pm = self.update_for_pv(block.block_type.clone(), block_no, block_no + 1, charge_in);
+                        charge_in = pm.charge_out;
+                        let soc_out = 10 + (pm.charge_out / self.soc_kwh).round().min(90.0) as usize;
+                        end_time = end_time.add(Duration::minutes(15));
+                        result.push(SocProgression { soc_out, end_time });
+                        block_no += 1;
+                    }
+                }
+            });
+
+        result
     }
 
     /// Function to break up the scheduling process over parallel threads
@@ -645,7 +693,7 @@ impl<'a> Schedule<'a> {
 /// * 'pre_blocks' - the number of blocks that has been skipped
 /// * 'soc_kwh' - kWh per soc used to convert from charge to State of Charge
 /// * 'date_time' - the date and time to be used to convert from hours to datetime in local TZ
-fn create_result_blocks(blocks: Vec<BlockInternal>, pre_blocks: usize, soc_kwh: f64, date_time: DateTime<Utc>) -> Vec<Block> {
+fn create_result_blocks(blocks: &Vec<BlockInternal>, pre_blocks: usize, soc_kwh: f64, date_time: DateTime<Utc>) -> Vec<Block> {
     let mut result: Vec<Block> = Vec::new();
     let time = date_time.duration_trunc(TimeDelta::days(1)).unwrap();
     let offset = ((date_time - time).num_minutes() / 15) as usize;
