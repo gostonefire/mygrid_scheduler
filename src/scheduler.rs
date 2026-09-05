@@ -273,7 +273,13 @@ impl<'a> Schedule<'a> {
         let mut end_time = start_time;
         let mut block_no = pre_blocks;
         blocks.iter()
-            .for_each(|block| {
+            .enumerate()
+            .for_each(|(i, block)| {
+                if i == 0 {
+                    let soc_in = 10 + (block.charge_in / self.soc_kwh).round().min(90.0) as usize;
+                    result.push(SocProgression { soc_out: soc_in, end_time: start_time });
+                }
+
                 charge_in = block.charge_in;
                 if block.block_type == BlockType::Charge {
                     for _ in 0..block.size {

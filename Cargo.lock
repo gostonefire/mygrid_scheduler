@@ -912,7 +912,7 @@ checksum = "9bb517913cfcfb9eeda59f36020269075a152701a01606c612f547e4890be399"
 
 [[package]]
 name = "mygrid_scheduler"
-version = "0.9.2"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "chrono",
